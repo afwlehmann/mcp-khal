@@ -105,6 +105,18 @@ After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set 
 ### Development
 `nix develop` installs git hooks: `nixfmt`, `biome` (lint + format for TypeScript), `ripsecrets`, the unit tests (`npm test`: typecheck + [vitest](https://vitest.dev) with enforced coverage thresholds), and `convco` (Conventional Commits, e.g. `feat: add x`, `fix: y`). A commit fails if any of them fail. `nix build` also runs the tests.
 
+### CI and releases
+`.github/workflows/ci.yml` runs on pushes to `main`, tags and pull requests:
+
+| Job | What it does |
+|---|---|
+| `nix` (Linux and macOS) | `nix flake check` (nixfmt, biome, ripsecrets, unit tests with coverage, Home Manager module check), `nix build`, and a smoke test of the binary. |
+| `npm` | `npm ci`, `npm run build`, `npm test` (typecheck, vitest, coverage thresholds) without Nix. |
+| `conventional commits` | Pull requests only: `convco check` over the commits of the PR. |
+| `release` | On a tag `vX.Y.Z`: checks the tag equals the `package.json` version, runs `npm pack` and creates a GitHub release with generated notes and the tarball attached. Tags with a suffix such as `v1.2.0-rc.1` become pre-releases. |
+
+To release: bump `version` in `package.json`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix` and `npm` jobs succeed.
+
 ## Setup (not a tool)
 ```
 npm run setup        # or: node dist/cli.js setup
