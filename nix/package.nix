@@ -18,12 +18,14 @@ buildNpmPackage {
       ../package.json
       ../package-lock.json
       ../tsconfig.json
-      ../tsconfig.test.json
+      ../tsconfig.typecheck.json
+      ../vitest.config.ts
+      ../vitest.global-setup.ts
       ../src
     ];
   };
 
-  npmDepsHash = "sha256-g/++uGgWr8UPpGCOT4YCSwyiOOA0ZcG8YZZAHHUZgqY=";
+  npmDepsHash = "sha256-ntarwI/goCRgZdTv0PuBjsoE0jBTDFOkWY82pmWqNXU=";
 
   nativeBuildInputs = [ makeWrapper ];
 

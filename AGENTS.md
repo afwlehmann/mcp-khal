@@ -5,5 +5,5 @@
 - User-supplied values must pass `safeToken` (no leading `-`, no control chars); positionals follow `--`.
 - Update README.md when tools change.
 - Nix: `flake.nix` + `nix/` (package, Home Manager module). Verify with `nix flake check --no-build`; format with `nix fmt <files>`. Update `npmDepsHash` in `nix/package.nix` when `package-lock.json` changes.
-- Tests: `npm test` (`node:test`, `src/*.test.ts`, helpers in `src/testlib.ts`; compiled via `tsconfig.test.json` to `dist-test/`). Add tests for every pure builder/validator you change.
+- Tests: `npm test` = `tsc -p tsconfig.typecheck.json` + `vitest run --coverage` (`src/*.test.ts`, helpers in `src/testlib.ts`, fake `khal` on PATH for effectful code). Coverage thresholds in `vitest.config.ts` (lines/statements 99, functions 98, branches 95) fail the run; `src/cli.ts` and `src/index.ts` are covered only end to end via the spawned server in `src/mcp.test.ts` (rebuilt by `vitest.global-setup.ts`) and are excluded from the thresholds. Add tests for every function you change.
 - Hooks (via `nix develop`): nixfmt, biome (`biome check --write`), ripsecrets, unit tests, convco. Commit messages must be Conventional Commits; commits fail if tests fail.

@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, expect, it } from "vitest";
 import {
   calendarsArgs,
   EVENT_FORMAT,
@@ -13,11 +12,11 @@ import { failure, unwrap } from "./testlib.js";
 
 describe("argv builders", () => {
   it("calendarsArgs uses printcalendars", () => {
-    assert.deepEqual(unwrap(calendarsArgs()), ["printcalendars"]);
+    expect(unwrap(calendarsArgs())).toEqual(["printcalendars"]);
   });
 
   it("listArgs defaults to today 7d", () => {
-    assert.deepEqual(unwrap(listArgs({})), [
+    expect(unwrap(listArgs({}))).toEqual([
       "list",
       "--day-format",
       "",
@@ -29,17 +28,17 @@ describe("argv builders", () => {
   });
 
   it("listArgs filters by calendar", () => {
-    assert.deepEqual(unwrap(listArgs({ calendar: "work" })).slice(0, 3), ["list", "-a", "work"]);
+    expect(unwrap(listArgs({ calendar: "work" })).slice(0, 3)).toEqual(["list", "-a", "work"]);
   });
 
   it("rangeArgs passes both ends as positionals", () => {
     const args = unwrap(rangeArgs({ start: "2026-10-28 10:00", end: "2026-10-28 11:00" }));
-    assert.deepEqual(args.slice(-4), ["2026-10-28", "10:00", "2026-10-28", "11:00"]);
+    expect(args.slice(-4)).toEqual(["2026-10-28", "10:00", "2026-10-28", "11:00"]);
   });
 
   it("searchArgs puts the query after --", () => {
     const args = unwrap(searchArgs({ query: "standup" }));
-    assert.deepEqual(args.slice(-2), ["--", "standup"]);
+    expect(args.slice(-2)).toEqual(["--", "standup"]);
   });
 
   it("newArgs places positionals after --", () => {
@@ -53,7 +52,7 @@ describe("argv builders", () => {
         description: "hi",
       }),
     );
-    assert.deepEqual(args, [
+    expect(args).toEqual([
       "new",
       "-a",
       "work",
@@ -72,29 +71,28 @@ describe("argv builders", () => {
 
 describe("input validation", () => {
   it("rejects values that look like options", () => {
-    assert.equal(failure(listArgs({ calendar: "-x" }))._tag, "InvalidInput");
-    assert.equal(failure(searchArgs({ query: "--foo" }))._tag, "InvalidInput");
-    assert.equal(failure(newArgs({ start: "tomorrow", summary: "-x" }))._tag, "InvalidInput");
-    assert.equal(failure(rangeArgs({ start: "today", end: "-1d" }))._tag, "InvalidInput");
+    expect(failure(listArgs({ calendar: "-x" }))._tag).toBe("InvalidInput");
+    expect(failure(searchArgs({ query: "--foo" }))._tag).toBe("InvalidInput");
+    expect(failure(newArgs({ start: "tomorrow", summary: "-x" }))._tag).toBe("InvalidInput");
+    expect(failure(rangeArgs({ start: "today", end: "-1d" }))._tag).toBe("InvalidInput");
   });
 
   it("rejects control characters", () => {
-    assert.equal(failure(newArgs({ start: "tomorrow", summary: "a\u0007b" }))._tag, "InvalidInput");
-    assert.equal(
-      failure(newArgs({ start: "tomorrow", summary: "ok", description: "x\u0000y" }))._tag,
+    expect(failure(newArgs({ start: "tomorrow", summary: "a\u0007b" }))._tag).toBe("InvalidInput");
+    expect(failure(newArgs({ start: "tomorrow", summary: "ok", description: "x\u0000y" }))._tag).toBe(
       "InvalidInput",
     );
   });
 
   it("rejects empty required values", () => {
-    assert.equal(failure(searchArgs({ query: "  " }))._tag, "InvalidInput");
+    expect(failure(searchArgs({ query: "  " }))._tag).toBe("InvalidInput");
   });
 });
 
 describe("parseEvents", () => {
   it("parses pipe-delimited lines and keeps pipes in the description", () => {
     const out = "work|2026-11-01|10:00|2026-11-01|11:00|Lunch|Cafe|a|b\nnoise\n";
-    assert.deepEqual(parseEvents(out), [
+    expect(parseEvents(out)).toEqual([
       {
         calendar: "work",
         startDate: "2026-11-01",
