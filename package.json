@@ -1,0 +1,32 @@
+{
+  "name": "mcp-khal",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/cli.js",
+  "bin": {
+    "mcp-khal": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "setup": "node dist/cli.js setup"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "khal",
+    "calendar"
+  ],
+  "author": "Alexander Lehmann <afwlehmann@googlemail.com>",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "effect": "^4.1.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
