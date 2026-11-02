@@ -145,6 +145,27 @@ describe("date and time validation", () => {
   });
 });
 
+describe("ICS injection", () => {
+  const payload = (sep: string): string => `Sync${sep}ATTENDEE:mailto:victim@corp.com`;
+  const separators = [0x0d, 0x85, 0x2028, 0x2029, 0x0b, 0x0c, 0x1c, 0x7f].map((c) => String.fromCodePoint(c));
+
+  it.each(separators)("rejects %j as a line break in summary, location and description", (sep) => {
+    for (const field of ["summary", "location", "description"] as const)
+      expect(failure(build({ [field]: payload(sep) }))._tag).toBe("InvalidInput");
+  });
+
+  it("escapes CRLF and LF instead of emitting a new line", () => {
+    const ics = unwrap(build({ description: "a\r\nATTENDEE:mailto:victim@corp.com\nb" }));
+    expect(ics).not.toMatch(/\r\nATTENDEE/);
+    expect(lines(ics)).toContain("DESCRIPTION:a\\nATTENDEE:mailto:victim@corp.com\\nb");
+  });
+
+  it("emits no property the caller did not ask for", () => {
+    const ics = unwrap(build({ summary: "plain", location: "tab\there" }));
+    expect(lines(ics).filter((l) => l.startsWith("ATTENDEE") || l.startsWith("ORGANIZER"))).toEqual([]);
+  });
+});
+
 describe("optional text fields", () => {
   it("emits escaped LOCATION and DESCRIPTION", () => {
     const ics = lines(unwrap(build({ location: "Room 1, Floor 2", description: "line1\nline2; ok" })));
