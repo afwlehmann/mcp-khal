@@ -1,5 +1,6 @@
 import { Result } from "effect";
 import { z } from "zod";
+import { isEmail } from "./config.js";
 import { InvalidInput } from "./errors.js";
 
 type V<A> = Result.Result<A, InvalidInput>;
@@ -51,50 +52,57 @@ export const RecurrenceSpec = z.object({
 });
 export type RecurrenceSpec = z.infer<typeof RecurrenceSpec>;
 
-export interface RecurringEventParams {
+export interface IcsEventParams {
   readonly summary: string;
   readonly date: string; // YYYY-MM-DD, first occurrence
   readonly startTime: string; // HH:MM
   readonly endTime: string; // HH:MM, later than startTime
-  readonly recurrence: Recurrence;
+  readonly recurrence?: Recurrence;
   readonly ending?: Ending;
   readonly location?: string;
   readonly description?: string;
   readonly alarm?: string; // e.g. 15m, 2h, 1d
+  readonly organizer?: string; // required when attendees is non-empty
+  readonly attendees?: readonly string[];
 }
 
-export interface NewEventWithRecurrence {
+export interface NewIcsEvent {
   readonly summary: string;
   readonly start: string; // YYYY-MM-DD HH:MM
   readonly end?: string; // HH:MM
   readonly location?: string;
   readonly description?: string;
   readonly alarm?: string;
-  readonly recurrence: RecurrenceSpec;
+  readonly recurrence?: RecurrenceSpec;
+  readonly organizer?: string;
+  readonly attendees?: readonly string[];
 }
 
 // ---------- pure helpers ----------
 
 const invalid = (message: string): InvalidInput => new InvalidInput({ message });
 
-/** Adapt unified tool input to the strict recurring-event shape. */
-export const toRecurringParams = (p: NewEventWithRecurrence): V<RecurringEventParams> =>
+/** Adapt unified tool input to the strict ICS event shape (recurring and/or with attendees). */
+export const toIcsParams = (p: NewIcsEvent): V<IcsEventParams> =>
   Result.gen(function* () {
     const s = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/.exec(p.start.trim());
-    if (!s) return yield* Result.fail(invalid("with recurrence, start must be 'YYYY-MM-DD HH:MM'"));
-    if (p.end === undefined) return yield* Result.fail(invalid("with recurrence, end ('HH:MM') is required"));
+    if (!s) return yield* Result.fail(invalid("with recurrence or attendees, start must be 'YYYY-MM-DD HH:MM'"));
+    if (p.end === undefined)
+      return yield* Result.fail(invalid("with recurrence or attendees, end ('HH:MM') is required"));
     const e = /^\d{2}:\d{2}$/.exec(p.end.trim());
-    if (!e) return yield* Result.fail(invalid("with recurrence, end must be 'HH:MM'"));
+    if (!e) return yield* Result.fail(invalid("with recurrence or attendees, end must be 'HH:MM'"));
     return {
       summary: p.summary,
       date: s[1]!,
       startTime: s[2]!,
       endTime: e[0],
-      recurrence: p.recurrence.pattern,
-      ending: p.recurrence.ending,
+      recurrence: p.recurrence?.pattern,
+      ending: p.recurrence?.ending,
       location: p.location,
       description: p.description,
       alarm: p.alarm,
+      organizer: p.organizer,
+      attendees: p.attendees,
     };
   });
 
@@ -198,9 +206,25 @@ const alarmLines = (alarm: string | undefined): V<string[]> => {
   return Result.succeed(["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Reminder", `TRIGGER:${trigger}`, "END:VALARM"]);
 };
 
+const mailto = (field: string, s: string): V<string> =>
+  isEmail(s) ? Result.succeed(`mailto:${s}`) : Result.fail(invalid(`${field} '${s}' is not a valid email address`));
+
+/** ORGANIZER + ATTENDEE lines; attendees without an organizer are rejected. */
+const inviteLines = (organizer: string | undefined, attendees: readonly string[] | undefined): V<string[]> =>
+  Result.gen(function* () {
+    if (attendees === undefined || attendees.length === 0) return [];
+    if (organizer === undefined) return yield* Result.fail(invalid("attendees require an organizer address"));
+    const org = yield* mailto("organizer", organizer);
+    const att = yield* Result.all([...new Set(attendees)].map((a) => mailto("attendee", a)));
+    return [
+      `ORGANIZER:${org}`,
+      ...att.map((a) => `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:${a}`),
+    ];
+  });
+
 /** Pure: uid and stamp are injected so the output is deterministic. */
-export const buildRecurringIcs = (
-  p: RecurringEventParams,
+export const buildIcs = (
+  p: IcsEventParams,
   uid: string,
   stamp: string, // YYYYMMDDTHHMMSSZ
 ): V<string> =>
@@ -210,7 +234,7 @@ export const buildRecurringIcs = (
     const start = yield* parseTime("startTime", p.startTime);
     const end = yield* parseTime("endTime", p.endTime);
     if (end <= start) return yield* Result.fail(invalid("endTime must be later than startTime"));
-    if (!matchesRule(p.recurrence, date))
+    if (p.recurrence !== undefined && !matchesRule(p.recurrence, date))
       return yield* Result.fail(
         invalid(`date ${p.date} does not satisfy the recurrence rule (first occurrence must match)`),
       );
@@ -223,9 +247,11 @@ export const buildRecurringIcs = (
     const location = yield* textField("location", p.location);
     const description = yield* textField("description", p.description);
     const alarm = yield* alarmLines(p.alarm);
+    const invite = yield* inviteLines(p.organizer, p.attendees);
 
     const day = compactDate(date);
-    const rrule = [...ruleParts(p.recurrence), ...endingParts(ending, until)].join(";");
+    const rrule =
+      p.recurrence === undefined ? [] : [`RRULE:${[...ruleParts(p.recurrence), ...endingParts(ending, until)].join(";")}`];
     const lines = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
@@ -235,8 +261,9 @@ export const buildRecurringIcs = (
       `DTSTAMP:${stamp}`,
       `DTSTART:${day}T${compactTime(p.startTime)}`,
       `DTEND:${day}T${compactTime(p.endTime)}`,
-      `RRULE:${rrule}`,
+      ...rrule,
       `SUMMARY:${summary}`,
+      ...invite,
       ...(location ? [`LOCATION:${location}`] : []),
       ...(description ? [`DESCRIPTION:${description}`] : []),
       ...alarm,

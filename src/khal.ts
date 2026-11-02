@@ -65,7 +65,7 @@ export interface NewParams {
   alarm?: string;
 }
 
-export const calendarsArgs = (): V<readonly string[]> => Result.succeed(["calendars"]);
+export const calendarsArgs = (): V<readonly string[]> => Result.succeed(["printcalendars"]);
 
 export const listArgs = (p: ListParams): V<readonly string[]> =>
   Result.gen(function* () {

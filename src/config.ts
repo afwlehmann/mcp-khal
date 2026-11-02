@@ -47,13 +47,15 @@ export const interpretAnswer = (
 /** Which address represents the user on this calendar? Explicit > mapping > email-like name. */
 export const resolveAddress = (
   mapping: Mapping,
-  calendar: string,
+  calendar: string | undefined,
   explicit?: string,
 ): Result.Result<string, InvalidInput> => {
   if (explicit !== undefined)
     return isEmail(explicit)
       ? Result.succeed(explicit)
       : Result.fail(invalid(`'${explicit}' is not a valid email address`));
+  if (calendar === undefined)
+    return Result.fail(invalid("calendar (or organizer) is required to determine your address for invites"));
   const mapped = mapping[calendar];
   if (mapped !== undefined) return Result.succeed(mapped);
   return isEmail(calendar)

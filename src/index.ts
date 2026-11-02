@@ -8,7 +8,8 @@ import type { KhalError } from "./errors.js";
 import {
   calendarsArgs, execute, importIcs, listArgs, newArgs, parseEvents, rangeArgs, searchArgs,
 } from "./khal.js";
-import { RecurrenceSpec, buildRecurringIcs, toRecurringParams } from "./recurrence.js";
+import { defaultConfigPath, loadMapping, resolveAddress } from "./config.js";
+import { RecurrenceSpec, buildIcs, toIcsParams } from "./recurrence.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -59,7 +60,7 @@ server.tool(
 
 server.tool(
   "new_event",
-  "Create an event. Without `recurrence`: start/end use khal syntax, e.g. start='2026-11-01 10:00', end='11:00' or '1h'; omit end for default duration. With `recurrence` (a series, e.g. every 2nd Wednesday: {pattern:{kind:'monthly_weekday',nth:2,weekday:'wednesday'}}): start must be 'YYYY-MM-DD HH:MM' (first occurrence, must satisfy the pattern) and end 'HH:MM' is required; times are local.",
+  "Create an event. Without `recurrence`: start/end use khal syntax, e.g. start='2026-11-01 10:00', end='11:00' or '1h'; omit end for default duration. With `recurrence` (a series, e.g. every 2nd Wednesday: {pattern:{kind:'monthly_weekday',nth:2,weekday:'wednesday'}}): start must be 'YYYY-MM-DD HH:MM' (first occurrence, must satisfy the pattern) and end 'HH:MM' is required; times are local. With `attendees`, an ICS invite is created (same start/end format as recurrence) with ORGANIZER taken from the calendar->email mapping.",
   {
     calendar: z.string().optional(),
     start: z.string(),
@@ -69,16 +70,24 @@ server.tool(
     description: z.string().optional(),
     alarm: z.string().optional().describe("Alarm offset, e.g. '15m'"),
     recurrence: RecurrenceSpec.optional(),
+    attendees: z.array(z.string()).optional().describe("Email addresses to invite; needs start 'YYYY-MM-DD HH:MM' and end 'HH:MM'"),
+    organizer: z.string().optional().describe("Override the organizer address; default comes from the calendar mapping (`mcp-khal setup`)"),
   },
-  ({ recurrence, ...p }) =>
+  ({ recurrence, attendees, organizer, ...p }) =>
     respond(
-      recurrence === undefined
+      recurrence === undefined && (attendees ?? []).length === 0
         ? execute(newArgs(p))
         : Effect.gen(function* () {
-            const params = yield* Effect.fromResult(toRecurringParams({ ...p, recurrence }));
-            const ics = yield* Effect.fromResult(
-              buildRecurringIcs(params, `${randomUUID()}@mcp-khal`, timestamp()),
+            const invited = (attendees ?? []).length > 0;
+            const from = invited
+              ? yield* Effect.flatMap(loadMapping(defaultConfigPath()), (m) =>
+                  Effect.fromResult(resolveAddress(m, p.calendar, organizer)),
+                )
+              : undefined;
+            const params = yield* Effect.fromResult(
+              toIcsParams({ ...p, recurrence, attendees, organizer: from }),
             );
+            const ics = yield* Effect.fromResult(buildIcs(params, `${randomUUID()}@mcp-khal`, timestamp()));
             return yield* importIcs(p.calendar, ics);
           }),
       plain,

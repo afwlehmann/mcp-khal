@@ -10,7 +10,7 @@ An MCP server that lets an assistant read and create events in your [khal](https
 | `list_events` | List events in a date range (default: today + 7 days) | `range?`, `calendar?` |
 | `events_in_range` | List all events intersecting a time range | `start`, `end`, `calendar?` |
 | `search_events` | Search events by text | `query`, `calendar?` |
-| `new_event` | Create an event or a recurring series | `start`, `end?`, `summary`, `calendar?`, `location?`, `description?`, `alarm?`, `recurrence?` |
+| `new_event` | Create an event or a recurring series | `start`, `end?`, `summary`, `calendar?`, `location?`, `description?`, `alarm?`, `recurrence?`, `attendees?`, `organizer?` |
 
 ### Recurring events
 `recurrence` is `{ pattern, ending? }`. For a series, `start` must be `YYYY-MM-DD HH:MM` (the first occurrence, which must match the pattern), `end` is a required `HH:MM`, and times are local.
@@ -25,6 +25,9 @@ An MCP server that lets an assistant read and create events in your [khal](https
 `ending` is `{ "kind": "never" }`, `{ "kind": "count", "count": n }` or `{ "kind": "until", "date": "YYYY-MM-DD" }`.
 
 Example, every 2nd Wednesday of the month: `{ "pattern": { "kind": "monthly_weekday", "nth": 2, "weekday": "wednesday" } }`.
+
+### Invites
+With `attendees` (email addresses), `new_event` imports an ICS with `ORGANIZER` and one `ATTENDEE` per address. Like a series, `start` must be `YYYY-MM-DD HH:MM` and `end` an `HH:MM`. The organizer is `organizer` if given, else the calendar's entry from the setup mapping, else the calendar name if it is an email address; otherwise the call fails. khal does not send the invites; that is left to your sync/mail tooling.
 
 ## Usage
 ```
