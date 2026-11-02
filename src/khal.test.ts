@@ -84,6 +84,26 @@ describe("input validation", () => {
     );
   });
 
+  it.each([0x0d, 0x7f, 0x85, 0x2028, 0x2029].map((c) => String.fromCodePoint(c)))(
+    "rejects line-break and C1 character %j in every free-text argument",
+    (sep) => {
+      const bad = `a${sep}b`;
+      const ok = { start: "tomorrow", summary: "ok" };
+      expect(failure(newArgs({ ...ok, summary: bad }))._tag).toBe("InvalidInput");
+      expect(failure(newArgs({ ...ok, location: bad }))._tag).toBe("InvalidInput");
+      expect(failure(newArgs({ ...ok, description: bad }))._tag).toBe("InvalidInput");
+      expect(failure(newArgs({ ...ok, alarm: bad }))._tag).toBe("InvalidInput");
+      expect(failure(newArgs({ ...ok, calendar: bad }))._tag).toBe("InvalidInput");
+      expect(failure(searchArgs({ query: bad }))._tag).toBe("InvalidInput");
+      expect(failure(listArgs({ calendar: bad }))._tag).toBe("InvalidInput");
+    },
+  );
+
+  it("still allows tabs and newlines in descriptions and ordinary unicode", () => {
+    const args = unwrap(newArgs({ start: "tomorrow", summary: "Café ☕", description: "line1\nline2\tx" }));
+    expect(args.at(-1)).toBe("line1\nline2\tx");
+  });
+
   it("rejects empty required values", () => {
     expect(failure(searchArgs({ query: "  " }))._tag).toBe("InvalidInput");
   });

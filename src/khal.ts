@@ -22,7 +22,7 @@ const nonEmpty =
 const noControlChars =
   (field: string) =>
   (s: string): V<string> =>
-    /[\u0000-\u0008\u000b-\u001f]/.test(s)
+    /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/.test(s)
       ? Result.fail(invalid(`${field} contains control characters`))
       : Result.succeed(s);
 
