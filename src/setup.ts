@@ -28,7 +28,7 @@ const ask = (
   });
 
 /** Re-prompts until the answer is valid. Resolves to undefined when skipped. */
-const promptFor = (
+export const promptFor = (
   rl: Interface,
   calendar: string,
   current: string | undefined,
@@ -51,40 +51,62 @@ const promptFor = (
   return loop;
 };
 
-const program: Effect.Effect<void, KhalError> = Effect.gen(function* () {
-  if (!process.stdin.isTTY)
-    return yield* Effect.fail(new InvalidInput({ message: "setup needs an interactive terminal." }));
-
-  const path = defaultConfigPath();
-  const names = parseCalendarNames(yield* execute(calendarsArgs()));
-  if (names.length === 0)
-    return yield* Effect.fail(new InvalidInput({ message: "khal reports no calendars." }));
-  const existing = yield* loadMapping(path);
-
-  console.log(`Configuring ${names.length} calendar(s). Config: ${path}\n`);
-  const mapping = yield* Effect.acquireUseRelease(
-    Effect.sync(() => createInterface({ input: process.stdin, output: process.stdout })),
-    (rl) =>
-      Effect.reduce(
-        names,
-        (): Mapping => existing,
-        (acc, name) =>
-          Effect.map(
-            promptFor(rl, name, acc[name]),
-            (addr): Mapping => (addr === undefined ? acc : { ...acc, [name]: addr }),
-          ),
+/** Steps through the calendars, prefilling each prompt from the accumulated mapping. */
+export const configure = (
+  rl: Interface,
+  names: readonly string[],
+  existing: Mapping,
+): Effect.Effect<Mapping, KhalError> =>
+  Effect.reduce(
+    names,
+    (): Mapping => existing,
+    (acc, name) =>
+      Effect.map(
+        promptFor(rl, name, acc[name]),
+        (addr): Mapping => (addr === undefined ? acc : { ...acc, [name]: addr }),
       ),
-    (rl) => Effect.sync(() => rl.close()),
   );
 
-  yield* saveMapping(path, mapping);
-  console.log(`\nSaved ${Object.keys(mapping).length} mapping(s) to ${path}`);
+/** The terminal and filesystem location setup works with; injectable for tests. */
+export interface SetupIo {
+  readonly isTTY: boolean;
+  readonly path: string;
+  readonly openPrompt: () => Interface;
+  readonly log: (line: string) => void;
+}
+
+export const setup = (io: SetupIo): Effect.Effect<void, KhalError> =>
+  Effect.gen(function* () {
+    if (!io.isTTY)
+      return yield* Effect.fail(new InvalidInput({ message: "setup needs an interactive terminal." }));
+
+    const names = parseCalendarNames(yield* execute(calendarsArgs()));
+    if (names.length === 0)
+      return yield* Effect.fail(new InvalidInput({ message: "khal reports no calendars." }));
+    const existing = yield* loadMapping(io.path);
+
+    io.log(`Configuring ${names.length} calendar(s). Config: ${io.path}\n`);
+    const mapping = yield* Effect.acquireUseRelease(
+      Effect.sync(io.openPrompt),
+      (rl) => configure(rl, names, existing),
+      (rl) => Effect.sync(() => rl.close()),
+    );
+
+    yield* saveMapping(io.path, mapping);
+    io.log(`\nSaved ${Object.keys(mapping).length} mapping(s) to ${io.path}`);
+  });
+
+const processIo = (): SetupIo => ({
+  isTTY: Boolean(process.stdin.isTTY),
+  path: defaultConfigPath(),
+  openPrompt: () => createInterface({ input: process.stdin, output: process.stdout }),
+  log: (line) => console.log(line),
 });
 
 /** Returns a process exit code. */
 export const runSetup = (): Promise<number> =>
   Effect.runPromise(
-    Effect.match(program, {
+    Effect.match(setup(processIo()), {
       onFailure: (e) => {
         console.error(`${e._tag}: ${e.message}`);
         return 1;
