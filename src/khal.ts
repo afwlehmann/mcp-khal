@@ -3,9 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Result } from "effect";
-import {
-  InvalidInput, NonZeroExit, NotInstalled, Timeout, ioError, type KhalError,
-} from "./errors.js";
+import { InvalidInput, ioError, type KhalError, NonZeroExit, NotInstalled, Timeout } from "./errors.js";
 
 /** Pure validation outcome. */
 type V<A> = Result.Result<A, InvalidInput>;
@@ -14,47 +12,64 @@ const invalid = (message: string): InvalidInput => new InvalidInput({ message })
 
 // ---------- pure validation ----------
 
-const nonEmpty = (field: string) => (s: string): V<string> => {
-  const t = s.trim();
-  return t === "" ? Result.fail(invalid(`${field} must not be empty`)) : Result.succeed(t);
-};
+const nonEmpty =
+  (field: string) =>
+  (s: string): V<string> => {
+    const t = s.trim();
+    return t === "" ? Result.fail(invalid(`${field} must not be empty`)) : Result.succeed(t);
+  };
 
-const noControlChars = (field: string) => (s: string): V<string> =>
-  /[\u0000-\u0008\u000b-\u001f]/.test(s)
-    ? Result.fail(invalid(`${field} contains control characters`))
-    : Result.succeed(s);
+const noControlChars =
+  (field: string) =>
+  (s: string): V<string> =>
+    /[\u0000-\u0008\u000b-\u001f]/.test(s)
+      ? Result.fail(invalid(`${field} contains control characters`))
+      : Result.succeed(s);
 
 /** A single value that can never be mistaken for an option. */
-const safeToken = (field: string) => (s: string): V<string> =>
-  Result.gen(function* () {
-    const t = yield* nonEmpty(field)(s);
-    if (t.startsWith("-")) return yield* Result.fail(invalid(`${field} must not start with '-'`));
-    return yield* noControlChars(field)(t);
-  });
+const safeToken =
+  (field: string) =>
+  (s: string): V<string> =>
+    Result.gen(function* () {
+      const t = yield* nonEmpty(field)(s);
+      if (t.startsWith("-")) return yield* Result.fail(invalid(`${field} must not start with '-'`));
+      return yield* noControlChars(field)(t);
+    });
 
 /** Like safeToken but allows internal whitespace (e.g. "today 7d"); each word is checked. */
-const safeTokenWords = (field: string) => (s: string): V<string> =>
-  Result.gen(function* () {
-    const words = yield* Result.all(s.trim().split(/\s+/).map(safeToken(field)));
-    return words.join(" ");
-  });
+const safeTokenWords =
+  (field: string) =>
+  (s: string): V<string> =>
+    Result.gen(function* () {
+      const words = yield* Result.all(s.trim().split(/\s+/).map(safeToken(field)));
+      return words.join(" ");
+    });
 
 const optional =
   (v: (s: string) => V<string>) =>
   (s: string | undefined): V<string | undefined> =>
     s === undefined ? Result.succeed(undefined) : v(s);
 
-const flag = (name: string, v: string | undefined): readonly string[] =>
-  v === undefined ? [] : [name, v];
+const flag = (name: string, v: string | undefined): readonly string[] => (v === undefined ? [] : [name, v]);
 
 // ---------- pure argv builders ----------
 
 export const EVENT_FORMAT =
   "{calendar}|{start-date}|{start-time}|{end-date}|{end-time}|{title}|{location}|{description}";
 
-export interface ListParams { readonly range?: string; readonly calendar?: string }
-export interface RangeParams { readonly start: string; readonly end: string; readonly calendar?: string }
-export interface SearchParams { readonly query: string; readonly calendar?: string }
+export interface ListParams {
+  readonly range?: string;
+  readonly calendar?: string;
+}
+export interface RangeParams {
+  readonly start: string;
+  readonly end: string;
+  readonly calendar?: string;
+}
+export interface SearchParams {
+  readonly query: string;
+  readonly calendar?: string;
+}
 export interface NewParams {
   readonly calendar?: string;
   readonly start: string;
@@ -71,9 +86,7 @@ export const listArgs = (p: ListParams): V<readonly string[]> =>
   Result.gen(function* () {
     const range = (yield* optional(safeTokenWords("range"))(p.range)) ?? "today 7d";
     const cal = yield* optional(safeToken("calendar"))(p.calendar);
-    return [
-      "list", ...flag("-a", cal), "--day-format", "", "--format", EVENT_FORMAT, ...range.split(/\s+/),
-    ];
+    return ["list", ...flag("-a", cal), "--day-format", "", "--format", EVENT_FORMAT, ...range.split(/\s+/)];
   });
 
 /** Events intersecting [start, end]; overlap semantics are delegated to `khal list`. */
@@ -97,11 +110,17 @@ export const newArgs = (p: NewParams): V<readonly string[]> =>
     const start = yield* safeTokenWords("start")(p.start);
     const end = yield* optional(safeTokenWords("end"))(p.end);
     const summary = yield* safeToken("summary")(p.summary);
-    const loc = yield* optional((s) => Result.flatMap(nonEmpty("location")(s), noControlChars("location")))(p.location);
+    const loc = yield* optional((s) => Result.flatMap(nonEmpty("location")(s), noControlChars("location")))(
+      p.location,
+    );
     const desc = yield* optional(noControlChars("description"))(p.description);
     const alarm = yield* optional(safeToken("alarm"))(p.alarm);
     return [
-      "new", ...flag("-a", cal), ...flag("-l", loc), ...flag("-m", alarm), "--",
+      "new",
+      ...flag("-a", cal),
+      ...flag("-l", loc),
+      ...flag("-m", alarm),
+      "--",
       ...start.split(/\s+/),
       ...(end === undefined ? [] : end.split(/\s+/)),
       summary,
@@ -186,8 +205,13 @@ export const parseEvents = (stdout: string): KhalEvent[] =>
     .map((l) => {
       const [calendar, startDate, startTime, endDate, endTime, title, location, ...rest] = l.split("|");
       return {
-        calendar: calendar!, startDate: startDate!, startTime: startTime!,
-        endDate: endDate!, endTime: endTime!, title: title!,
-        location: location!, description: rest.join("|"),
+        calendar: calendar!,
+        startDate: startDate!,
+        startTime: startTime!,
+        endDate: endDate!,
+        endTime: endTime!,
+        title: title!,
+        location: location!,
+        description: rest.join("|"),
       };
     });

@@ -17,7 +17,10 @@ export const configPath = (env: Readonly<Record<string, string | undefined>>, ho
   env.MCP_KHAL_CONFIG ?? join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "mcp-khal.json");
 
 export const parseCalendarNames = (stdout: string): string[] =>
-  stdout.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
 
 export const parseMapping = (json: string): Result.Result<Mapping, InvalidInput> =>
   Result.gen(function* () {
@@ -32,7 +35,7 @@ export const parseMapping = (json: string): Result.Result<Mapping, InvalidInput>
     return raw as Mapping;
   });
 
-export const serializeMapping = (m: Mapping): string => JSON.stringify(m, null, 2) + "\n";
+export const serializeMapping = (m: Mapping): string => `${JSON.stringify(m, null, 2)}\n`;
 
 /** Answer to a setup prompt: blank keeps the default (or skips), otherwise must be an email. */
 export const interpretAnswer = (

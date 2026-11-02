@@ -38,6 +38,27 @@ MCP client config:
 { "mcpServers": { "khal": { "command": "node", "args": ["/path/to/mcp-khal/dist/cli.js"] } } }
 ```
 
+## Nix / Home Manager
+The flake exposes `packages.<system>.default` (version taken from `package.json`, `khal` bundled on its PATH), `overlays.default` and `homeModules.default`.
+
+```nix
+# flake inputs: mcp-khal.url = "github:<you>/mcp-khal";
+{
+  imports = [ inputs.mcp-khal.homeModules.default ];
+  programs.mcp-khal = {
+    enable = true;
+    # replaces `mcp-khal setup`; written to $XDG_CONFIG_HOME/mcp-khal.json
+    calendarEmails.work = "me@example.com";
+  };
+}
+```
+Then point your MCP client at `${config.programs.mcp-khal.package}/bin/mcp-khal`.
+
+After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set it to `lib.fakeHash`, build, copy the reported hash).
+
+### Development
+`nix develop` installs git hooks: `nixfmt`, `biome` (lint + format for TypeScript), `ripsecrets`, the unit tests (`npm test`, built on `node:test`), and `convco` (Conventional Commits, e.g. `feat: add x`, `fix: y`). A commit fails if any of them fail. `nix build` also runs the tests.
+
 ## Setup (not a tool)
 ```
 npm run setup        # or: node dist/cli.js setup

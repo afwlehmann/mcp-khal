@@ -1,8 +1,13 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import { Effect, Result } from "effect";
 import {
-  defaultConfigPath, interpretAnswer, isEmail, loadMapping, parseCalendarNames, saveMapping,
+  defaultConfigPath,
+  interpretAnswer,
+  isEmail,
+  loadMapping,
   type Mapping,
+  parseCalendarNames,
+  saveMapping,
 } from "./config.js";
 import { InvalidInput, ioError, type KhalError } from "./errors.js";
 import { calendarsArgs, execute } from "./khal.js";
@@ -36,7 +41,10 @@ const promptFor = (
     (answer) =>
       Result.match(interpretAnswer(answer, fallback), {
         onFailure: (msg): Effect.Effect<string | undefined, KhalError> =>
-          Effect.flatMap(Effect.sync(() => console.error(`  ${msg}`)), () => loop),
+          Effect.flatMap(
+            Effect.sync(() => console.error(`  ${msg}`)),
+            () => loop,
+          ),
         onSuccess: (addr): Effect.Effect<string | undefined, KhalError> => Effect.succeed(addr),
       }),
   );
@@ -49,7 +57,8 @@ const program: Effect.Effect<void, KhalError> = Effect.gen(function* () {
 
   const path = defaultConfigPath();
   const names = parseCalendarNames(yield* execute(calendarsArgs()));
-  if (names.length === 0) return yield* Effect.fail(new InvalidInput({ message: "khal reports no calendars." }));
+  if (names.length === 0)
+    return yield* Effect.fail(new InvalidInput({ message: "khal reports no calendars." }));
   const existing = yield* loadMapping(path);
 
   console.log(`Configuring ${names.length} calendar(s). Config: ${path}\n`);
@@ -60,8 +69,9 @@ const program: Effect.Effect<void, KhalError> = Effect.gen(function* () {
         names,
         (): Mapping => existing,
         (acc, name) =>
-          Effect.map(promptFor(rl, name, acc[name]), (addr): Mapping =>
-            addr === undefined ? acc : { ...acc, [name]: addr },
+          Effect.map(
+            promptFor(rl, name, acc[name]),
+            (addr): Mapping => (addr === undefined ? acc : { ...acc, [name]: addr }),
           ),
       ),
     (rl) => Effect.sync(() => rl.close()),

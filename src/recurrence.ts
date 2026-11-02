@@ -7,9 +7,7 @@ type V<A> = Result.Result<A, InvalidInput>;
 
 // ---------- schema: invalid combinations are unrepresentable ----------
 
-export const Weekday = z.enum([
-  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-]);
+export const Weekday = z.enum(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]);
 export type Weekday = z.infer<typeof Weekday>;
 
 /** 1st..4th or last. */
@@ -86,7 +84,8 @@ const invalid = (message: string): InvalidInput => new InvalidInput({ message })
 export const toIcsParams = (p: NewIcsEvent): V<IcsEventParams> =>
   Result.gen(function* () {
     const s = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/.exec(p.start.trim());
-    if (!s) return yield* Result.fail(invalid("with recurrence or attendees, start must be 'YYYY-MM-DD HH:MM'"));
+    if (!s)
+      return yield* Result.fail(invalid("with recurrence or attendees, start must be 'YYYY-MM-DD HH:MM'"));
     if (p.end === undefined)
       return yield* Result.fail(invalid("with recurrence or attendees, end ('HH:MM') is required"));
     const e = /^\d{2}:\d{2}$/.exec(p.end.trim());
@@ -107,11 +106,22 @@ export const toIcsParams = (p: NewIcsEvent): V<IcsEventParams> =>
   });
 
 const BYDAY: Record<Weekday, string> = {
-  monday: "MO", tuesday: "TU", wednesday: "WE", thursday: "TH",
-  friday: "FR", saturday: "SA", sunday: "SU",
+  monday: "MO",
+  tuesday: "TU",
+  wednesday: "WE",
+  thursday: "TH",
+  friday: "FR",
+  saturday: "SA",
+  sunday: "SU",
 };
 const WEEKDAY_BY_UTC_DAY: readonly Weekday[] = [
-  "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
 ];
 
 const parseDate = (field: string, s: string): V<Date> => {
@@ -165,7 +175,8 @@ const ruleParts = (r: Recurrence): string[] => {
       return ["FREQ=DAILY", ...intervalPart(r.interval)];
     case "weekly":
       return [
-        "FREQ=WEEKLY", ...intervalPart(r.interval),
+        "FREQ=WEEKLY",
+        ...intervalPart(r.interval),
         `BYDAY=${[...new Set(r.weekdays)].map((w) => BYDAY[w]).join(",")}`,
       ];
     case "monthly_day":
@@ -194,16 +205,24 @@ const escapeText = (s: string): string =>
   s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
 
 const textField = (field: string, s: string | undefined): V<string | undefined> =>
-  s === undefined ? Result.succeed(undefined)
-  : CONTROL.test(s) ? Result.fail(invalid(`${field} contains control characters`))
-  : Result.succeed(escapeText(s));
+  s === undefined
+    ? Result.succeed(undefined)
+    : CONTROL.test(s)
+      ? Result.fail(invalid(`${field} contains control characters`))
+      : Result.succeed(escapeText(s));
 
 const alarmLines = (alarm: string | undefined): V<string[]> => {
   if (alarm === undefined) return Result.succeed([]);
   const m = /^(\d{1,4})([mhd])$/.exec(alarm.trim());
   if (!m) return Result.fail(invalid("alarm must look like 15m, 2h or 1d"));
   const trigger = m[2] === "d" ? `-P${m[1]}D` : `-PT${m[1]}${m[2]!.toUpperCase()}`;
-  return Result.succeed(["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Reminder", `TRIGGER:${trigger}`, "END:VALARM"]);
+  return Result.succeed([
+    "BEGIN:VALARM",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:Reminder",
+    `TRIGGER:${trigger}`,
+    "END:VALARM",
+  ]);
 };
 
 /** RFC 5545 line folding: at most 75 octets per line, continuations start with a space. */
@@ -214,7 +233,7 @@ const fold = (line: string): string => {
       const limit = acc.done.length === 0 ? 75 : 74;
       return acc.bytes + n > limit
         ? { done: [...acc.done, acc.cur], cur: ch, bytes: n }
-        : { ...acc, cur: acc.cur + ch, bytes: acc.bytes + n };
+        : { done: acc.done, cur: acc.cur + ch, bytes: acc.bytes + n };
     },
     { done: [] as string[], cur: "", bytes: 0 },
   );
@@ -222,7 +241,9 @@ const fold = (line: string): string => {
 };
 
 const mailto = (field: string, s: string): V<string> =>
-  isEmail(s) ? Result.succeed(`mailto:${s}`) : Result.fail(invalid(`${field} '${s}' is not a valid email address`));
+  isEmail(s)
+    ? Result.succeed(`mailto:${s}`)
+    : Result.fail(invalid(`${field} '${s}' is not a valid email address`));
 
 /** ORGANIZER + ATTENDEE lines; attendees without an organizer are rejected. */
 const inviteLines = (organizer: string | undefined, attendees: readonly string[] | undefined): V<string[]> =>
@@ -234,7 +255,8 @@ const inviteLines = (organizer: string | undefined, attendees: readonly string[]
     const others = attendees.filter(
       (a, i, all) => lower(a) !== lower(organizer) && all.findIndex((b) => lower(b) === lower(a)) === i,
     );
-    if (others.length === 0) return yield* Result.fail(invalid("attendees must include someone other than the organizer"));
+    if (others.length === 0)
+      return yield* Result.fail(invalid("attendees must include someone other than the organizer"));
     const att = yield* Result.all(others.map((a) => mailto("attendee", a)));
     return [
       `ORGANIZER:${org}`,
@@ -271,7 +293,9 @@ export const buildIcs = (
 
     const day = compactDate(date);
     const rrule =
-      p.recurrence === undefined ? [] : [`RRULE:${[...ruleParts(p.recurrence), ...endingParts(ending, until)].join(";")}`];
+      p.recurrence === undefined
+        ? []
+        : [`RRULE:${[...ruleParts(p.recurrence), ...endingParts(ending, until)].join(";")}`];
     const lines = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
@@ -290,5 +314,5 @@ export const buildIcs = (
       "END:VEVENT",
       "END:VCALENDAR",
     ];
-    return lines.map(fold).join("\r\n") + "\r\n";
+    return `${lines.map(fold).join("\r\n")}\r\n`;
   });
