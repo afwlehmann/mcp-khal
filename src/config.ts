@@ -56,8 +56,7 @@ export const resolveAddress = (
       : Result.fail(invalid(`'${explicit}' is not a valid email address`));
   if (calendar === undefined)
     return Result.fail(invalid("calendar (or organizer) is required to determine your address for invites"));
-  const mapped = mapping[calendar];
-  if (mapped !== undefined) return Result.succeed(mapped);
+  if (Object.hasOwn(mapping, calendar)) return Result.succeed(mapping[calendar]!);
   return isEmail(calendar)
     ? Result.succeed(calendar)
     : Result.fail(
@@ -68,6 +67,15 @@ export const resolveAddress = (
 // ---------- effects ----------
 
 export const defaultConfigPath = (): string => configPath(process.env, homedir());
+
+/** An explicit address never touches the config file, so a broken config can't block it. */
+export const resolveOrganizer = (
+  calendar: string | undefined,
+  explicit: string | undefined,
+): Effect.Effect<string, KhalError> =>
+  explicit !== undefined
+    ? Effect.fromResult(resolveAddress({}, calendar, explicit))
+    : Effect.flatMap(loadMapping(defaultConfigPath()), (m) => Effect.fromResult(resolveAddress(m, calendar)));
 
 /** A missing file is an empty mapping, not an error. */
 export const loadMapping = (path: string): Effect.Effect<Mapping, KhalError> =>

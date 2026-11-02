@@ -4,11 +4,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import { z } from "zod";
-import type { KhalError } from "./errors.js";
+import { InvalidInput, type KhalError } from "./errors.js";
 import {
   calendarsArgs, execute, importIcs, listArgs, newArgs, parseEvents, rangeArgs, searchArgs,
+  type NewParams,
 } from "./khal.js";
-import { defaultConfigPath, loadMapping, resolveAddress } from "./config.js";
+import { resolveOrganizer } from "./config.js";
 import { RecurrenceSpec, buildIcs, toIcsParams } from "./recurrence.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -30,6 +31,26 @@ const respond = <A>(eff: Effect.Effect<A, KhalError>, render: (a: A) => string):
 const plain = (s: string): string => s;
 const json = (v: unknown): string => JSON.stringify(v, null, 2);
 const timestamp = (): string => new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+
+type NewEventInput = NewParams & {
+  recurrence?: RecurrenceSpec | undefined;
+  attendees?: readonly string[] | undefined;
+  organizer?: string | undefined;
+};
+
+/** Plain events go through `khal new`; series and invites are built as ICS and imported. */
+const newEvent = ({ recurrence, attendees = [], organizer, ...p }: NewEventInput): Effect.Effect<string, KhalError> => {
+  const invited = attendees.length > 0;
+  if (!invited && organizer !== undefined)
+    return Effect.fail(new InvalidInput({ message: "organizer is only valid together with attendees" }));
+  if (!invited && recurrence === undefined) return execute(newArgs(p));
+  return Effect.gen(function* () {
+    const from = invited ? yield* resolveOrganizer(p.calendar, organizer) : undefined;
+    const params = yield* Effect.fromResult(toIcsParams({ ...p, recurrence, attendees, organizer: from }));
+    const ics = yield* Effect.fromResult(buildIcs(params, `${randomUUID()}@mcp-khal`, timestamp()));
+    return yield* importIcs(p.calendar, ics);
+  });
+};
 
 const server = new McpServer({ name: "mcp-khal", version: "1.0.0" });
 
@@ -73,25 +94,7 @@ server.tool(
     attendees: z.array(z.string()).optional().describe("Email addresses to invite; needs start 'YYYY-MM-DD HH:MM' and end 'HH:MM'"),
     organizer: z.string().optional().describe("Override the organizer address; default comes from the calendar mapping (`mcp-khal setup`)"),
   },
-  ({ recurrence, attendees, organizer, ...p }) =>
-    respond(
-      recurrence === undefined && (attendees ?? []).length === 0
-        ? execute(newArgs(p))
-        : Effect.gen(function* () {
-            const invited = (attendees ?? []).length > 0;
-            const from = invited
-              ? yield* Effect.flatMap(loadMapping(defaultConfigPath()), (m) =>
-                  Effect.fromResult(resolveAddress(m, p.calendar, organizer)),
-                )
-              : undefined;
-            const params = yield* Effect.fromResult(
-              toIcsParams({ ...p, recurrence, attendees, organizer: from }),
-            );
-            const ics = yield* Effect.fromResult(buildIcs(params, `${randomUUID()}@mcp-khal`, timestamp()));
-            return yield* importIcs(p.calendar, ics);
-          }),
-      plain,
-    ),
+  (p) => respond(newEvent(p), plain),
 );
 
 await server.connect(new StdioServerTransport());

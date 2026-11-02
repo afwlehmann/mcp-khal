@@ -206,6 +206,21 @@ const alarmLines = (alarm: string | undefined): V<string[]> => {
   return Result.succeed(["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Reminder", `TRIGGER:${trigger}`, "END:VALARM"]);
 };
 
+/** RFC 5545 line folding: at most 75 octets per line, continuations start with a space. */
+const fold = (line: string): string => {
+  const { done, cur } = [...line].reduce(
+    (acc, ch) => {
+      const n = Buffer.byteLength(ch);
+      const limit = acc.done.length === 0 ? 75 : 74;
+      return acc.bytes + n > limit
+        ? { done: [...acc.done, acc.cur], cur: ch, bytes: n }
+        : { ...acc, cur: acc.cur + ch, bytes: acc.bytes + n };
+    },
+    { done: [] as string[], cur: "", bytes: 0 },
+  );
+  return [...done, cur].join("\r\n ");
+};
+
 const mailto = (field: string, s: string): V<string> =>
   isEmail(s) ? Result.succeed(`mailto:${s}`) : Result.fail(invalid(`${field} '${s}' is not a valid email address`));
 
@@ -215,7 +230,12 @@ const inviteLines = (organizer: string | undefined, attendees: readonly string[]
     if (attendees === undefined || attendees.length === 0) return [];
     if (organizer === undefined) return yield* Result.fail(invalid("attendees require an organizer address"));
     const org = yield* mailto("organizer", organizer);
-    const att = yield* Result.all([...new Set(attendees)].map((a) => mailto("attendee", a)));
+    const lower = (s: string): string => s.toLowerCase();
+    const others = attendees.filter(
+      (a, i, all) => lower(a) !== lower(organizer) && all.findIndex((b) => lower(b) === lower(a)) === i,
+    );
+    if (others.length === 0) return yield* Result.fail(invalid("attendees must include someone other than the organizer"));
+    const att = yield* Result.all(others.map((a) => mailto("attendee", a)));
     return [
       `ORGANIZER:${org}`,
       ...att.map((a) => `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:${a}`),
@@ -270,5 +290,5 @@ export const buildIcs = (
       "END:VEVENT",
       "END:VCALENDAR",
     ];
-    return lines.join("\r\n") + "\r\n";
+    return lines.map(fold).join("\r\n") + "\r\n";
   });
