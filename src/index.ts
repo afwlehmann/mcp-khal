@@ -56,7 +56,7 @@ server.tool(
 
 server.tool(
   "new_event",
-  "Create an event. Without `recurrence`: start/end use khal syntax, e.g. start='2026-11-01 10:00', end='11:00' or '1h'; omit end for default duration. With `recurrence` (a series, e.g. every 2nd Wednesday: {pattern:{kind:'monthly_weekday',nth:2,weekday:'wednesday'}}): start must be 'YYYY-MM-DD HH:MM' (first occurrence, must satisfy the pattern) and end 'HH:MM' is required; times are local. With `attendees`, an ICS invite is created (same start/end format as recurrence) with ORGANIZER taken from the calendar->email mapping.",
+  "WRITE OPERATION: this changes the user's calendar. Ask the user for confirmation before calling it (show the summary, time, calendar and any attendees), and never invite attendees without their explicit approval. Create an event. Without `recurrence`: start/end use khal syntax, e.g. start='2026-11-01 10:00', end='11:00' or '1h'; omit end for default duration. With `recurrence` (a series, e.g. every 2nd Wednesday: {pattern:{kind:'monthly_weekday',nth:2,weekday:'wednesday'}}): start must be 'YYYY-MM-DD HH:MM' (first occurrence, must satisfy the pattern) and end 'HH:MM' is required; times are local. With `attendees`, an ICS invite is created (same start/end format as recurrence) with ORGANIZER taken from the calendar->email mapping.",
   {
     calendar: z.string().optional(),
     start: z.string(),

@@ -69,6 +69,15 @@ describe("MCP server over stdio", () => {
     ]);
   });
 
+  it("tells agents to ask the user before the write tool, and only there", async () => {
+    const { tools } = await client.listTools();
+    const described = (name: string): string => tools.find((t) => t.name === name)?.description ?? "";
+    expect(described("new_event")).toMatch(/WRITE OPERATION/);
+    expect(described("new_event")).toMatch(/Ask the user for confirmation/);
+    for (const name of ["list_calendars", "list_events", "events_in_range", "search_events"])
+      expect(described(name)).not.toMatch(/WRITE OPERATION/);
+  });
+
   it("list_calendars returns khal's output", async () => {
     const r = await client.callTool({ name: "list_calendars", arguments: {} });
     expect(isError(r)).toBe(false);
