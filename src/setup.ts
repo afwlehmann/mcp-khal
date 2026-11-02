@@ -4,15 +4,22 @@ import {
   defaultConfigPath, interpretAnswer, isEmail, loadMapping, parseCalendarNames, saveMapping,
   type Mapping,
 } from "./config.js";
-import { InvalidInput, type KhalError } from "./errors.js";
+import { InvalidInput, ioError, type KhalError } from "./errors.js";
 import { calendarsArgs, execute } from "./khal.js";
 
 /** Asks a question with an editable prefilled answer. */
-const ask = (rl: Interface, question: string, prefill: string | undefined): Effect.Effect<string> =>
-  Effect.promise(() => {
-    const answer = rl.question(question);
-    if (prefill !== undefined) rl.write(prefill);
-    return answer;
+const ask = (
+  rl: Interface,
+  question: string,
+  prefill: string | undefined,
+): Effect.Effect<string, KhalError> =>
+  Effect.tryPromise({
+    try: () => {
+      const answer = rl.question(question);
+      if (prefill !== undefined) rl.write(prefill);
+      return answer;
+    },
+    catch: ioError,
   });
 
 /** Re-prompts until the answer is valid. Resolves to undefined when skipped. */
@@ -20,17 +27,17 @@ const promptFor = (
   rl: Interface,
   calendar: string,
   current: string | undefined,
-): Effect.Effect<string | undefined> => {
+): Effect.Effect<string | undefined, KhalError> => {
   // an existing mapping wins; an email-like calendar name is the next best guess
   const fallback = current ?? (isEmail(calendar) ? calendar : undefined);
   const hint = fallback ? "" : " (blank to skip)";
-  const loop: Effect.Effect<string | undefined> = Effect.flatMap(
+  const loop: Effect.Effect<string | undefined, KhalError> = Effect.flatMap(
     ask(rl, `Your email on '${calendar}'${hint}: `, fallback),
     (answer) =>
       Result.match(interpretAnswer(answer, fallback), {
-        onFailure: (msg): Effect.Effect<string | undefined> =>
+        onFailure: (msg): Effect.Effect<string | undefined, KhalError> =>
           Effect.flatMap(Effect.sync(() => console.error(`  ${msg}`)), () => loop),
-        onSuccess: (addr): Effect.Effect<string | undefined> => Effect.succeed(addr),
+        onSuccess: (addr): Effect.Effect<string | undefined, KhalError> => Effect.succeed(addr),
       }),
   );
   return loop;

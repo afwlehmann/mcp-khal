@@ -52,17 +52,17 @@ const flag = (name: string, v: string | undefined): readonly string[] =>
 export const EVENT_FORMAT =
   "{calendar}|{start-date}|{start-time}|{end-date}|{end-time}|{title}|{location}|{description}";
 
-export interface ListParams { range?: string; calendar?: string }
-export interface RangeParams { start: string; end: string; calendar?: string }
-export interface SearchParams { query: string; calendar?: string }
+export interface ListParams { readonly range?: string; readonly calendar?: string }
+export interface RangeParams { readonly start: string; readonly end: string; readonly calendar?: string }
+export interface SearchParams { readonly query: string; readonly calendar?: string }
 export interface NewParams {
-  calendar?: string;
-  start: string;
-  end?: string;
-  summary: string;
-  location?: string;
-  description?: string;
-  alarm?: string;
+  readonly calendar?: string;
+  readonly start: string;
+  readonly end?: string;
+  readonly summary: string;
+  readonly location?: string;
+  readonly description?: string;
+  readonly alarm?: string;
 }
 
 export const calendarsArgs = (): V<readonly string[]> => Result.succeed(["printcalendars"]);
@@ -169,14 +169,14 @@ export const importIcs = (calendar: string | undefined, ics: string): Effect.Eff
 // ---------- output parsing ----------
 
 export interface KhalEvent {
-  calendar: string;
-  startDate: string;
-  startTime: string;
-  endDate: string;
-  endTime: string;
-  title: string;
-  location: string;
-  description: string;
+  readonly calendar: string;
+  readonly startDate: string;
+  readonly startTime: string;
+  readonly endDate: string;
+  readonly endTime: string;
+  readonly title: string;
+  readonly location: string;
+  readonly description: string;
 }
 
 export const parseEvents = (stdout: string): KhalEvent[] =>
