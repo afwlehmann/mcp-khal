@@ -78,7 +78,7 @@ Options:
 |---|---|---|---|
 | `programs.mcp-khal.enable` | bool | `false` | Install `mcp-khal` into `home.packages`. |
 | `programs.mcp-khal.package` | package | the flake's `default` package for your system | Override to use your own build or an overlay. |
-| `programs.mcp-khal.calendarEmails` | attrs of string | `{ }` | Calendar name → your address on it. Used as the organizer of invites (see [Invites](#invites)). |
+| `programs.mcp-khal.calendarEmails` | attrs of email address | `{ }` | Calendar name → your address on it. Used as the organizer of invites (see [Invites](#invites)). Values are validated with the same rule as the server, so a typo fails at `home-manager switch` instead of breaking invites later. |
 
 What the module does:
 - With `calendarEmails` set, it writes `$XDG_CONFIG_HOME/mcp-khal.json` (`~/.config/mcp-khal.json`) through `xdg.configFile`. This replaces the interactive `mcp-khal setup`. The file then lives in the Nix store as a read-only symlink, so edit the option instead of rerunning `setup`.

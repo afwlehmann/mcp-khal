@@ -49,6 +49,10 @@
           hooks = baseHooks;
         };
         unit-tests = self.packages.${system}.default;
+        hm-module = import ./nix/module-check.nix {
+          pkgs = pkgsFor system;
+          inherit self;
+        };
       });
 
       devShells = forEachSystem (

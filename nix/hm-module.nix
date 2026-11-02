@@ -8,6 +8,18 @@
 
 let
   cfg = config.programs.mcp-khal;
+
+  # same rule as `isEmail` in src/config.ts: the server rejects a config with any other value
+  part = "[^[:space:]@,;:<>]+";
+  emailRegex = "${part}@${part}\\.${part}";
+
+  emailAddress = lib.mkOptionType {
+    name = "emailAddress";
+    description = "email address";
+    descriptionClass = "noun";
+    check = x: lib.isString x && builtins.match emailRegex x != null;
+    merge = lib.mergeEqualOption;
+  };
 in
 {
   options.programs.mcp-khal = {
@@ -21,7 +33,7 @@ in
     };
 
     calendarEmails = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
+      type = lib.types.attrsOf emailAddress;
       default = { };
       example = {
         work = "me@example.com";
