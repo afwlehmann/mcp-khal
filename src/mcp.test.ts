@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializeConfig } from "./config.js";
 import { type FakeKhal, fakeKhal, removeDir, tempDir } from "./testlib.js";
 
@@ -79,6 +79,45 @@ describe("the server process finds khal through its configuration", () => {
     const r = await listCalendars("/does/not/exist/khal");
     expect(isError(r)).toBe(true);
     expect(textOf(r)).toMatch(/NotInstalled: khal executable '\/does\/not\/exist\/khal' not found/);
+  });
+});
+
+describe("the server process logs its configuration at startup", () => {
+  it("writes one line to stderr with the effective khal and masked addresses, never the environment", async () => {
+    const dir = await tempDir();
+    const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });
+    let serverLog = "";
+    try {
+      const config = join(dir, "cfg.json");
+      await writeFile(
+        config,
+        serializeConfig({ khal: "/cfg/khal", calendarEmails: { work: "me@work.com" } }),
+      );
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [CLI],
+        env: {
+          PATH: process.env.PATH ?? "",
+          MCP_KHAL_CONFIG: config,
+          MCP_KHAL_BIN: "/env/khal",
+          API_TOKEN: "t0ps3cret",
+        },
+        stderr: "pipe",
+      });
+      transport.stderr?.on("data", (chunk: Buffer) => {
+        serverLog += chunk.toString();
+      });
+      await client.connect(transport);
+      await vi.waitFor(() => expect(serverLog).toMatch(/mcp-khal starting with configuration/));
+      expect(serverLog).toContain('"binary":"/env/khal","source":"MCP_KHAL_BIN"');
+      expect(serverLog).toContain(`"configPath":${JSON.stringify(config)}`);
+      expect(serverLog).toContain("m***@work.com");
+      expect(serverLog).not.toContain("me@work.com");
+      expect(serverLog).not.toContain("t0ps3cret");
+    } finally {
+      await client.close();
+      await removeDir(dir);
+    }
   });
 });
 

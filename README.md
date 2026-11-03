@@ -69,6 +69,8 @@ The config file is `$MCP_KHAL_CONFIG`, else `$XDG_CONFIG_HOME/mcp-khal.json`, el
 | `MCP_KHAL_CONFIG` | Path of the config file. |
 | `XDG_CONFIG_HOME` | Base directory of the config file when `MCP_KHAL_CONFIG` is unset. |
 
+At startup the server logs its effective configuration as one line on stderr (stdout carries the MCP protocol): the config file path, the khal executable and whether it came from `MCP_KHAL_BIN` or the config, the timeout and the calendar names. Addresses are masked (`m***@work.com`), values of secret-looking keys (`token`, `password`, `secret`, `api key`, …) and credentials inside URLs are redacted, and the process environment is never logged.
+
 A config in the flat `{ "work": "me@example.com" }` format of v1.0.0 is still read. An unreadable or invalid config stops the server at startup with a message on stderr, instead of failing later on every call.
 
 ## Nix / Home Manager

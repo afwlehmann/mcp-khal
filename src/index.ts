@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Effect } from "effect";
 import { createServer } from "./server.js";
 import { loadSettings } from "./settings.js";
+import { startupLine } from "./startup.js";
 
 const settings = await Effect.runPromise(
   Effect.match(loadSettings({ env: process.env, home: homedir(), tmpDir: tmpdir() }), {
@@ -21,6 +22,8 @@ const settings = await Effect.runPromise(
 if (settings === undefined) {
   process.exitCode = 1;
 } else {
+  // stderr: stdout belongs to the MCP protocol
+  console.error(startupLine(settings));
   await createServer(settings, { uid: randomUUID, now: () => new Date() }).connect(
     new StdioServerTransport(),
   );
