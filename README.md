@@ -40,6 +40,12 @@ MCP client config:
 { "mcpServers": { "khal": { "command": "node", "args": ["/path/to/mcp-khal/dist/cli.js"] } } }
 ```
 
+### Setup (not a tool)
+```
+npm run setup        # or: node dist/cli.js setup
+```
+Lists your khal calendars and asks for your email address on each. The mapping (calendar name → address) is saved to `~/.config/mcp-khal.json` (`$XDG_CONFIG_HOME` and `$MCP_KHAL_CONFIG` are honoured). Existing entries are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. Rerun any time.
+
 ## Nix / Home Manager
 The flake exposes:
 
@@ -116,9 +122,3 @@ After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set 
 | `release` | On a tag `vX.Y.Z`: checks the tag equals the `package.json` version, runs `npm pack` and creates a GitHub release with generated notes and the tarball attached. Tags with a suffix such as `v1.2.0-rc.1` become pre-releases. |
 
 To release: bump `version` in `package.json`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix` and `npm` jobs succeed.
-
-## Setup (not a tool)
-```
-npm run setup        # or: node dist/cli.js setup
-```
-Lists your khal calendars and asks for your email address on each. The mapping (calendar name → address) is saved to `~/.config/mcp-khal.json` (`$XDG_CONFIG_HOME` and `$MCP_KHAL_CONFIG` are honoured). Existing entries are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. Rerun any time.
