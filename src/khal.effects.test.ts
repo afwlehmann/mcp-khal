@@ -34,7 +34,9 @@ describe("runKhal", () => {
 
   it("runs the executable named in the settings, not whatever is on PATH", async () => {
     const k = await install({ stdout: "from settings\n" });
-    const settings = k.settings({ childEnv: { PATH: "/usr/bin:/bin" } });
+    const settings = k.settings();
+    // the fake khal is reachable only through settings.khal, never through PATH
+    expect(settings.childEnv.PATH ?? "").not.toContain(k.dir);
     expect(await runOk(runKhal(settings, ["list"]))).toBe("from settings\n");
   });
 
