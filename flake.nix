@@ -31,9 +31,9 @@
       };
     in
     {
-      packages = forEachSystem (system: rec {
+      packages = forEachSystem (system: {
         mcp-khal = (pkgsFor system).callPackage ./nix/package.nix { };
-        default = mcp-khal;
+        default = self.packages.${system}.mcp-khal;
       });
 
       overlays.default = final: _prev: {

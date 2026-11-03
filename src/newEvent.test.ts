@@ -1,19 +1,8 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { serializeMapping } from "./config.js";
 import { InvalidInput } from "./errors.js";
 import { newEvent, timestamp } from "./newEvent.js";
-import {
-  type FakeKhal,
-  fakeKhal,
-  prependPath,
-  removeDir,
-  runFail,
-  runOk,
-  tempDir,
-  unfold,
-} from "./testlib.js";
+import type { Settings } from "./settings.js";
+import { type FakeKhal, fakeKhal, runFail, runOk, unfold } from "./testlib.js";
 
 const NOW = new Date("2026-11-02T10:00:00.123Z");
 const UID = "fixed-uid";
@@ -26,38 +15,34 @@ describe("timestamp", () => {
 
 describe("newEvent", () => {
   let fake: FakeKhal;
-  let restorePath: () => void;
-  let dir: string;
-  let savedConfig: string | undefined;
+  let settings: Settings;
 
   beforeEach(async () => {
     fake = await fakeKhal({ stdout: "done\n" });
-    restorePath = prependPath(fake.dir);
-    dir = await tempDir();
-    savedConfig = process.env.MCP_KHAL_CONFIG;
-    const config = join(dir, "cfg.json");
-    await writeFile(config, serializeMapping({ work: "me@work.com" }));
-    process.env.MCP_KHAL_CONFIG = config;
+    settings = fake.settings({ calendarEmails: { work: "me@work.com" } });
   });
 
   afterEach(async () => {
-    restorePath();
-    if (savedConfig === undefined) delete process.env.MCP_KHAL_CONFIG;
-    else process.env.MCP_KHAL_CONFIG = savedConfig;
     await fake.cleanup();
-    await removeDir(dir);
   });
 
   it("creates a plain event with `khal new`", async () => {
     const out = await runOk(
-      newEvent({ calendar: "work", start: "tomorrow 10:00", end: "1h", summary: "Lunch" }, UID, NOW),
+      newEvent(
+        settings,
+        { calendar: "work", start: "tomorrow 10:00", end: "1h", summary: "Lunch" },
+        UID,
+        NOW,
+      ),
     );
     expect(out).toBe("done\n");
     expect(await fake.calls()).toEqual([["new", "-a", "work", "--", "tomorrow", "10:00", "1h", "Lunch"]]);
   });
 
   it("rejects an organizer without attendees", async () => {
-    const e = await runFail(newEvent({ start: "tomorrow", summary: "x", organizer: "me@x.com" }, UID, NOW));
+    const e = await runFail(
+      newEvent(settings, { start: "tomorrow", summary: "x", organizer: "me@x.com" }, UID, NOW),
+    );
     expect(e).toBeInstanceOf(InvalidInput);
     expect(await fake.calls()).toEqual([]);
   });
@@ -65,6 +50,7 @@ describe("newEvent", () => {
   it("imports a recurring series without invite lines", async () => {
     await runOk(
       newEvent(
+        settings,
         {
           calendar: "work",
           start: "2026-11-04 10:00",
@@ -83,9 +69,10 @@ describe("newEvent", () => {
     expect(ics).not.toMatch(/ORGANIZER|ATTENDEE/);
   });
 
-  it("invites attendees with the organizer taken from the mapping", async () => {
+  it("invites attendees with the organizer taken from the settings' mapping", async () => {
     await runOk(
       newEvent(
+        settings,
         {
           calendar: "work",
           start: "2026-11-04 10:00",
@@ -108,6 +95,7 @@ describe("newEvent", () => {
   it("an explicit organizer wins over the mapping", async () => {
     await runOk(
       newEvent(
+        settings,
         {
           calendar: "work",
           start: "2026-11-04 10:00",
@@ -123,9 +111,30 @@ describe("newEvent", () => {
     expect((await fake.imported()) ?? "").toMatch(/ORGANIZER:mailto:alias@work\.com/);
   });
 
+  it("does not consult anything but the settings for the organizer", async () => {
+    const bare = fake.settings({ calendarEmails: {} });
+    const e = await runFail(
+      newEvent(
+        bare,
+        {
+          calendar: "work",
+          start: "2026-11-04 10:00",
+          end: "11:00",
+          summary: "Review",
+          attendees: ["you@x.com"],
+        },
+        UID,
+        NOW,
+      ),
+    );
+    expect(e).toBeInstanceOf(InvalidInput);
+    expect(e.message).toMatch(/no address known for calendar 'work'/);
+  });
+
   it("fails without khal calls when no organizer can be determined", async () => {
     const e = await runFail(
       newEvent(
+        settings,
         { start: "2026-11-04 10:00", end: "11:00", summary: "Review", attendees: ["you@x.com"] },
         UID,
         NOW,
@@ -138,6 +147,7 @@ describe("newEvent", () => {
   it("rejects khal-style relative times for invites", async () => {
     const e = await runFail(
       newEvent(
+        settings,
         {
           calendar: "work",
           start: "tomorrow 10:00",

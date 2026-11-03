@@ -44,14 +44,39 @@ MCP client config:
 ```
 npm run setup        # or: node dist/cli.js setup
 ```
-Lists your khal calendars and asks for your email address on each. The mapping (calendar name → address) is saved to `~/.config/mcp-khal.json` (`$XDG_CONFIG_HOME` and `$MCP_KHAL_CONFIG` are honoured). Existing entries are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. Rerun any time.
+Lists your khal calendars and asks for your email address on each. The mapping (calendar name → address) is saved to the config file (see below). Existing entries are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. Rerun any time; the `khal` setting of the file is preserved.
+
+### Configuration
+The server reads its environment and one JSON config file once, at startup. Nothing is re-read while it runs, so restart it after changing either.
+
+The config file is `$MCP_KHAL_CONFIG`, else `$XDG_CONFIG_HOME/mcp-khal.json`, else `~/.config/mcp-khal.json`. A missing file means the defaults. Both keys are optional:
+
+```json
+{
+  "khal": "khal",
+  "calendarEmails": { "work": "me@example.com" }
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `khal` | `"khal"` | The khal executable: a command name looked up on `PATH`, or an absolute path such as `/nix/store/…/bin/khal`. |
+| `calendarEmails` | `{ }` | Calendar name → your address on it, used as the organizer of invites. Written by `mcp-khal setup`. |
+
+| Environment variable | Meaning |
+|---|---|
+| `MCP_KHAL_BIN` | Overrides `khal` from the config file, for example `MCP_KHAL_BIN=/opt/khal/bin/khal`. An empty value is ignored. |
+| `MCP_KHAL_CONFIG` | Path of the config file. |
+| `XDG_CONFIG_HOME` | Base directory of the config file when `MCP_KHAL_CONFIG` is unset. |
+
+A config in the flat `{ "work": "me@example.com" }` format of v1.0.0 is still read. An unreadable or invalid config stops the server at startup with a message on stderr, instead of failing later on every call.
 
 ## Nix / Home Manager
 The flake exposes:
 
 | Output | Purpose |
 |---|---|
-| `packages.<system>.default` | The server. The version is taken from `package.json` and `khal` is bundled on its `PATH`. |
+| `packages.<system>.default` | The server. The version is taken from `package.json`. khal is not bundled: it must be on `PATH`, or be named in the config / `MCP_KHAL_BIN`. |
 | `overlays.default` | Adds `pkgs.mcp-khal`. |
 | `homeModules.default` | The Home Manager module `programs.mcp-khal`. |
 
@@ -84,11 +109,11 @@ Options:
 |---|---|---|---|
 | `programs.mcp-khal.enable` | bool | `false` | Install `mcp-khal` into `home.packages`. |
 | `programs.mcp-khal.package` | package | the flake's `default` package for your system | Override to use your own build or an overlay. |
+| `programs.mcp-khal.khalPackage` | package | `pkgs.khal` | The khal that mcp-khal runs. Its path is written to the `khal` key of the config file, so the server does not depend on `PATH`. |
 | `programs.mcp-khal.calendarEmails` | attrs of email address | `{ }` | Calendar name → your address on it. Used as the organizer of invites (see [Invites](#invites)). Values are validated with the same rule as the server, so a typo fails at `home-manager switch` instead of breaking invites later. |
 
 What the module does:
-- With `calendarEmails` set, it writes `$XDG_CONFIG_HOME/mcp-khal.json` (`~/.config/mcp-khal.json`) through `xdg.configFile`. This replaces the interactive `mcp-khal setup`. The file then lives in the Nix store as a read-only symlink, so edit the option instead of rerunning `setup`.
-- With `calendarEmails` empty, it manages no file. You can still run `mcp-khal setup` yourself and it will write the file as usual.
+- It writes `~/.config/mcp-khal.json` through `xdg.configFile` with `khal` (the path of `khalPackage`) and `calendarEmails`; see [Configuration](#configuration). This replaces the interactive `mcp-khal setup`. The file lives in the Nix store as a read-only symlink, so change the options instead of rerunning `setup`. `MCP_KHAL_BIN` in the environment of the MCP client still overrides the khal path.
 - Calendar names must match the names khal reports (`khal printcalendars`), not necessarily the names of Home Manager accounts.
 
 ### Wiring it into an MCP client
@@ -102,7 +127,7 @@ programs.claude-code.mcpServers.khal = {
 Any other client takes the same `command` with no arguments.
 
 ### khal and vdirsyncer
-- mcp-khal only ever runs `khal`; it never calls vdirsyncer. The bundled `khal` reads khal's usual config file, so use the khal configuration you already have (for example the one Home Manager generates from `programs.khal` / `accounts.calendar`).
+- mcp-khal only ever runs `khal`; it never calls vdirsyncer. The configured `khal` reads khal's usual config file, so use the khal configuration you already have (for example the one Home Manager generates from `programs.khal` / `accounts.calendar`).
 - Events are written into khal's local storage. Getting them to the server is vdirsyncer's job, so keep syncing with your existing setup (for example `services.vdirsyncer` or a timer running `vdirsyncer sync`). A new event or invite reaches the remote calendar after the next sync.
 - khal does not send invitation mails; that is left to your sync or mail tooling.
 

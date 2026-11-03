@@ -1,16 +1,16 @@
-import { createInterface, type Interface } from "node:readline/promises";
+import type { Interface } from "node:readline/promises";
 import { Effect, Result } from "effect";
 import {
-  defaultConfigPath,
   interpretAnswer,
   isEmail,
-  loadMapping,
+  loadConfig,
   type Mapping,
   parseCalendarNames,
-  saveMapping,
+  saveConfig,
 } from "./config.js";
 import { InvalidInput, ioError, type KhalError } from "./errors.js";
 import { calendarsArgs, execute } from "./khal.js";
+import { loadSettings, type Settings, type SettingsInput } from "./settings.js";
 
 /** Asks a question with an editable prefilled answer. */
 const ask = (
@@ -67,50 +67,50 @@ export const configure = (
       ),
   );
 
-/** The terminal and filesystem location setup works with; injectable for tests. */
+/** The terminal setup talks to; supplied by the edge (cli.ts) and replaceable in tests. */
 export interface SetupIo {
   readonly isTTY: boolean;
-  readonly path: string;
   readonly openPrompt: () => Interface;
   readonly log: (line: string) => void;
 }
 
-export const setup = (io: SetupIo): Effect.Effect<void, KhalError> =>
+export const setup = (settings: Settings, io: SetupIo): Effect.Effect<void, KhalError> =>
   Effect.gen(function* () {
     if (!io.isTTY)
       return yield* Effect.fail(new InvalidInput({ message: "setup needs an interactive terminal." }));
 
-    const names = parseCalendarNames(yield* execute(calendarsArgs()));
+    const names = parseCalendarNames(yield* execute(settings, calendarsArgs()));
     if (names.length === 0)
       return yield* Effect.fail(new InvalidInput({ message: "khal reports no calendars." }));
-    const existing = yield* loadMapping(io.path);
+    // the file's own values, so an MCP_KHAL_BIN override is never written back into it
+    const existing = yield* loadConfig(settings.configPath);
 
-    io.log(`Configuring ${names.length} calendar(s). Config: ${io.path}\n`);
+    io.log(`Configuring ${names.length} calendar(s). Config: ${settings.configPath}\n`);
     const mapping = yield* Effect.acquireUseRelease(
       Effect.sync(io.openPrompt),
-      (rl) => configure(rl, names, existing),
+      (rl) => configure(rl, names, existing.calendarEmails),
       (rl) => Effect.sync(() => rl.close()),
     );
 
-    yield* saveMapping(io.path, mapping);
-    io.log(`\nSaved ${Object.keys(mapping).length} mapping(s) to ${io.path}`);
+    yield* saveConfig(settings.configPath, { ...existing, calendarEmails: mapping });
+    io.log(`\nSaved ${Object.keys(mapping).length} mapping(s) to ${settings.configPath}`);
   });
 
-const processIo = (): SetupIo => ({
-  isTTY: Boolean(process.stdin.isTTY),
-  path: defaultConfigPath(),
-  openPrompt: () => createInterface({ input: process.stdin, output: process.stdout }),
-  log: (line) => console.log(line),
-});
-
-/** Returns a process exit code. */
-export const runSetup = (): Promise<number> =>
+/** Loads the settings, runs setup and returns a process exit code. */
+export const runSetup = (
+  input: SettingsInput,
+  io: SetupIo,
+  logError: (line: string) => void,
+): Promise<number> =>
   Effect.runPromise(
-    Effect.match(setup(processIo()), {
-      onFailure: (e) => {
-        console.error(`${e._tag}: ${e.message}`);
-        return 1;
+    Effect.match(
+      Effect.flatMap(loadSettings(input), (settings) => setup(settings, io)),
+      {
+        onFailure: (e) => {
+          logError(`${e._tag}: ${e.message}`);
+          return 1;
+        },
+        onSuccess: () => 0,
       },
-      onSuccess: () => 0,
-    }),
+    ),
   );

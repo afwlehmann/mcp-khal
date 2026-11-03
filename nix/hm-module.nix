@@ -29,7 +29,17 @@ in
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
       defaultText = lib.literalExpression "mcp-khal.packages.\${pkgs.stdenv.hostPlatform.system}.default";
-      description = "The mcp-khal package (bundles khal on its PATH).";
+      description = "The mcp-khal package.";
+    };
+
+    khalPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.khal;
+      defaultText = lib.literalExpression "pkgs.khal";
+      description = ''
+        The khal that mcp-khal runs. Its path is written to the `khal` key of
+        `mcp-khal.json`, so the server does not depend on `PATH`.
+      '';
     };
 
     calendarEmails = lib.mkOption {
@@ -48,8 +58,11 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    xdg.configFile."mcp-khal.json" = lib.mkIf (cfg.calendarEmails != { }) {
-      text = builtins.toJSON cfg.calendarEmails + "\n";
-    };
+    xdg.configFile."mcp-khal.json".text =
+      builtins.toJSON {
+        khal = "${lib.getBin cfg.khalPackage}/bin/khal";
+        inherit (cfg) calendarEmails;
+      }
+      + "\n";
   };
 }

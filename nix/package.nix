@@ -1,10 +1,9 @@
 {
   lib,
   buildNpmPackage,
-  makeWrapper,
-  khal,
 }:
 
+# The server itself. khal is a runtime dependency that wrapper.nix puts on its PATH.
 let
   packageJson = lib.importJSON ../package.json;
 in
@@ -26,13 +25,6 @@ buildNpmPackage {
   };
 
   npmDepsHash = "sha256-ntarwI/goCRgZdTv0PuBjsoE0jBTDFOkWY82pmWqNXU=";
-
-  nativeBuildInputs = [ makeWrapper ];
-
-  # khal is a runtime dependency; keep the package self-contained
-  postInstall = ''
-    wrapProgram $out/bin/mcp-khal --prefix PATH : ${lib.makeBinPath [ khal ]}
-  '';
 
   doCheck = true;
   checkPhase = ''

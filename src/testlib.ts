@@ -2,6 +2,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Result } from "effect";
+import type { Settings } from "./settings.js";
 
 /** Test helpers; excluded from the production build. */
 export const unwrap = <A, E>(r: Result.Result<A, E>): A =>
@@ -50,15 +51,17 @@ export const tempDir = (): Promise<string> => mkdtemp(join(tmpdir(), "mcp-khal-t
 
 export const removeDir = (dir: string): Promise<void> => rm(dir, { recursive: true, force: true });
 
-/** Prepends `dir` to PATH; returns a function restoring the previous PATH. */
-export const prependPath = (dir: string): (() => void) => {
-  const old = process.env.PATH;
-  process.env.PATH = `${dir}:${old ?? ""}`;
-  return () => {
-    if (old === undefined) delete process.env.PATH;
-    else process.env.PATH = old;
-  };
-};
+/** Settings for tests; nothing is read from the real environment except PATH for the shell tools. */
+export const testSettings = (overrides: Partial<Settings> = {}): Settings => ({
+  khal: "khal",
+  khalSource: "config",
+  calendarEmails: {},
+  configPath: join(tmpdir(), "mcp-khal-tests-no-such-dir", "mcp-khal.json"),
+  childEnv: { PATH: process.env.PATH },
+  tmpDir: tmpdir(),
+  timeoutMs: 15_000,
+  ...overrides,
+});
 
 export interface FakeKhalOptions {
   readonly stdout?: string;
@@ -69,12 +72,16 @@ export interface FakeKhalOptions {
 }
 
 export interface FakeKhal {
-  /** directory containing the fake `khal` executable; put it on PATH */
+  /** directory containing the fake `khal` executable */
   readonly dir: string;
+  /** settings that run this fake khal */
+  readonly settings: (overrides?: Partial<Settings>) => Settings;
   /** every invocation's argv, in order */
   readonly calls: () => Promise<string[][]>;
   /** contents of the last file passed to `khal import`, if any */
   readonly imported: () => Promise<string | undefined>;
+  /** the value of MCP_TEST_MARK in the environment khal was started with */
+  readonly mark: () => Promise<string | undefined>;
   readonly cleanup: () => Promise<void>;
 }
 
@@ -83,6 +90,7 @@ export const fakeKhal = async (opts: FakeKhalOptions = {}): Promise<FakeKhal> =>
   const dir = await tempDir();
   const script = `#!/bin/sh
 { for a in "$@"; do printf '%s\\n' "$a"; done; printf '%s\\n' '--end--'; } >> "${dir}/calls.log"
+printf '%s' "\${MCP_TEST_MARK-unset}" > "${dir}/mark"
 if [ "$1" = "import" ]; then for last; do :; done; cp "$last" "${dir}/imported.ics"; fi
 if [ -f "${dir}/sleep" ]; then sleep "$(cat "${dir}/sleep")"; fi
 cat "${dir}/out"
@@ -101,6 +109,8 @@ exit "$(cat "${dir}/exit")"
 
   return {
     dir,
+    settings: (overrides = {}) =>
+      testSettings({ khal: join(dir, "khal"), configPath: join(dir, "cfg.json"), ...overrides }),
     calls: async () => {
       const log = (await read("calls.log")) ?? "";
       return log
@@ -109,6 +119,7 @@ exit "$(cat "${dir}/exit")"
         .map((block) => block.split("\n").slice(0, -1));
     },
     imported: () => read("imported.ics"),
+    mark: () => read("mark"),
     cleanup: () => removeDir(dir),
   };
 };

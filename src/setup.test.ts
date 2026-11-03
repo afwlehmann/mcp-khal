@@ -1,13 +1,11 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface, type Interface } from "node:readline/promises";
+import type { Interface } from "node:readline/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadMapping, serializeMapping } from "./config.js";
+import { loadConfig, serializeConfig } from "./config.js";
 import { InvalidInput } from "./errors.js";
 import { configure, promptFor, runSetup, setup } from "./setup.js";
-import { type FakeKhal, fakeKhal, prependPath, removeDir, runFail, runOk, tempDir } from "./testlib.js";
-
-vi.mock("node:readline/promises", () => ({ createInterface: vi.fn() }));
+import { type FakeKhal, fakeKhal, removeDir, runFail, runOk, tempDir } from "./testlib.js";
 
 /** A scripted readline: answers come from the queue, prompts and prefills are recorded. */
 const scripted = (answers: readonly string[]) => {
@@ -72,53 +70,65 @@ describe("promptFor", () => {
 
 describe("setup", () => {
   let fake: FakeKhal;
-  let restore: () => void;
   let dir: string;
 
   beforeEach(async () => {
     fake = await fakeKhal({ stdout: "work\nme@home.org\n" });
-    restore = prependPath(fake.dir);
     dir = await tempDir();
   });
   afterEach(async () => {
-    restore();
     await fake.cleanup();
     await removeDir(dir);
   });
 
-  const io = (s: ReturnType<typeof scripted>, path: string, isTTY = true) => {
+  const io = (s: ReturnType<typeof scripted>, isTTY = true) => {
     const lines: string[] = [];
     let closed = 0;
     const rl = Object.assign(s.rl, { close: () => closed++ });
     return {
       lines,
       closed: () => closed,
-      io: { isTTY, path, openPrompt: () => rl, log: (l: string) => lines.push(l) },
+      io: { isTTY, openPrompt: () => rl, log: (l: string) => lines.push(l) },
     };
   };
 
   it("configures every khal calendar, using saved values as defaults, and saves the result", async () => {
     const path = join(dir, "cfg.json");
-    await writeFile(path, serializeMapping({ work: "old@work.com" }));
+    await writeFile(
+      path,
+      serializeConfig({ khal: "/opt/khal/bin/khal", calendarEmails: { work: "old@work.com" } }),
+    );
     const s = scripted(["", ""]);
-    const t = io(s, path);
-    await runOk(setup(t.io));
-    expect(await runOk(loadMapping(path))).toEqual({ work: "old@work.com", "me@home.org": "me@home.org" });
+    const t = io(s);
+    await runOk(setup(fake.settings({ configPath: path }), t.io));
+    // the configured khal location survives a rerun of setup
+    expect(await runOk(loadConfig(path))).toEqual({
+      khal: "/opt/khal/bin/khal",
+      calendarEmails: { work: "old@work.com", "me@home.org": "me@home.org" },
+    });
     expect(s.prefills).toEqual(["old@work.com", "me@home.org"]);
     expect(t.closed()).toBe(1);
     expect(t.lines.join("\n")).toMatch(/Configuring 2 calendar\(s\)/);
     expect(t.lines.join("\n")).toMatch(/Saved 2 mapping\(s\)/);
   });
 
+  it("never writes an MCP_KHAL_BIN override back into the config file", async () => {
+    const path = join(dir, "cfg.json");
+    await writeFile(path, serializeConfig({ khal: "khal", calendarEmails: {} }));
+    const settings = fake.settings({ configPath: path, khalSource: "MCP_KHAL_BIN" });
+    await runOk(setup(settings, io(scripted(["", ""])).io));
+    expect((await runOk(loadConfig(path))).khal).toBe("khal");
+  });
+
   it("refuses to run without a terminal", async () => {
-    const e = await runFail(setup(io(scripted([]), join(dir, "cfg.json"), false).io));
+    const e = await runFail(setup(fake.settings(), io(scripted([]), false).io));
     expect(e).toBeInstanceOf(InvalidInput);
     expect(await fake.calls()).toEqual([]);
   });
 
   it("fails when khal reports no calendars", async () => {
     await writeFile(join(fake.dir, "out"), "");
-    const e = await runFail(setup(io(scripted([]), join(dir, "cfg.json")).io));
+    const e = await runFail(setup(fake.settings(), io(scripted([])).io));
     expect(e).toBeInstanceOf(InvalidInput);
     expect(e.message).toMatch(/no calendars/);
   });
@@ -126,51 +136,69 @@ describe("setup", () => {
   it("does not write the config when the config file is unreadable", async () => {
     const path = join(dir, "cfg.json");
     await writeFile(path, "{ not json");
-    const e = await runFail(setup(io(scripted([]), path).io));
+    const e = await runFail(setup(fake.settings({ configPath: path }), io(scripted([])).io));
     expect(e).toBeInstanceOf(InvalidInput);
   });
 });
 
 describe("runSetup", () => {
   let fake: FakeKhal;
-  let restorePath: () => void;
   let dir: string;
-  let savedConfig: string | undefined;
-  const setTTY = (value: boolean) =>
-    Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
 
   beforeEach(async () => {
     fake = await fakeKhal({ stdout: "work\n" });
-    restorePath = prependPath(fake.dir);
     dir = await tempDir();
-    savedConfig = process.env.MCP_KHAL_CONFIG;
-    process.env.MCP_KHAL_CONFIG = join(dir, "cfg.json");
   });
   afterEach(async () => {
-    setTTY(false);
-    restorePath();
-    if (savedConfig === undefined) delete process.env.MCP_KHAL_CONFIG;
-    else process.env.MCP_KHAL_CONFIG = savedConfig;
     await fake.cleanup();
     await removeDir(dir);
-    vi.restoreAllMocks();
   });
 
-  it("returns 0 after saving the mapping at the XDG-style config path", async () => {
-    setTTY(true);
+  const input = (config: string) => ({
+    env: { MCP_KHAL_CONFIG: config, MCP_KHAL_BIN: join(fake.dir, "khal"), PATH: process.env.PATH },
+    home: dir,
+    tmpDir: dir,
+  });
+
+  it("returns 0 after saving the mapping at the path named by the environment it is given", async () => {
     const s = scripted(["me@work.com"]);
-    vi.mocked(createInterface).mockReturnValue(Object.assign(s.rl, { close: () => {} }));
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    expect(await runSetup()).toBe(0);
-    expect(await runOk(loadMapping(join(dir, "cfg.json")))).toEqual({ work: "me@work.com" });
-    expect(log).toHaveBeenCalledTimes(2);
+    const lines: string[] = [];
+    const rl = Object.assign(s.rl, { close: () => {} });
+    const code = await runSetup(
+      input(join(dir, "cfg.json")),
+      { isTTY: true, openPrompt: () => rl, log: (l) => lines.push(l) },
+      () => {},
+    );
+    expect(code).toBe(0);
+    expect(await runOk(loadConfig(join(dir, "cfg.json")))).toEqual({
+      khal: "khal",
+      calendarEmails: { work: "me@work.com" },
+    });
+    expect(lines).toHaveLength(2);
   });
 
   it("returns 1 and reports the error when not on a terminal", async () => {
-    setTTY(false);
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await runSetup()).toBe(1);
-    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^InvalidInput: setup needs an interactive/));
+    const errors: string[] = [];
+    const code = await runSetup(
+      input(join(dir, "cfg.json")),
+      { isTTY: false, openPrompt: () => scripted([]).rl, log: () => {} },
+      (l) => errors.push(l),
+    );
+    expect(code).toBe(1);
+    expect(errors[0]).toMatch(/^InvalidInput: setup needs an interactive/);
+  });
+
+  it("returns 1 when the config cannot be loaded", async () => {
+    const path = join(dir, "corrupt.json");
+    await writeFile(path, "{ not json");
+    const errors: string[] = [];
+    const code = await runSetup(
+      input(path),
+      { isTTY: true, openPrompt: () => scripted([]).rl, log: () => {} },
+      (l) => errors.push(l),
+    );
+    expect(code).toBe(1);
+    expect(errors[0]).toMatch(/^InvalidInput:/);
   });
 });
 

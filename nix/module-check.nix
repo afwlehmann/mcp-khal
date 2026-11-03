@@ -23,8 +23,8 @@ let
       config._module.args.pkgs = pkgs;
     };
 
-  evaluate =
-    emails:
+  evaluateWith =
+    extra: emails:
     (lib.evalModules {
       modules = [
         stub
@@ -32,12 +32,15 @@ let
         {
           programs.mcp-khal = {
             enable = true;
-            package = pkgs.hello;
+            package = pkgs.hello; # stand-in for the server; evaluated, never built
             calendarEmails = emails;
-          };
+          }
+          // extra;
         }
       ];
     }).config;
+
+  evaluate = evaluateWith { };
 
   accepted = {
     work = "me@example.com";
@@ -59,15 +62,29 @@ let
       builtins.deepSeq (evaluate { work = value; }).programs.mcp-khal.calendarEmails true
     )).success;
 
-  written = (evaluate accepted).xdg.configFile."mcp-khal.json".text;
+  configOf = config: config.xdg.configFile."mcp-khal.json".text;
+  expected =
+    khal: emails:
+    builtins.toJSON {
+      inherit khal;
+      calendarEmails = emails;
+    }
+    + "\n";
 in
 
 assert lib.assertMsg (
-  written == builtins.toJSON accepted + "\n"
-) "valid addresses must be written to mcp-khal.json unchanged";
+  configOf (evaluate accepted) == expected "${pkgs.khal}/bin/khal" accepted
+) "valid addresses must be written to mcp-khal.json together with the khal path";
 assert lib.assertMsg (lib.all isRejected rejected) "invalid addresses must be rejected";
 assert lib.assertMsg (
-  !(evaluate { }).xdg.configFile ? "mcp-khal.json"
-) "no config file may be managed when calendarEmails is empty";
+  configOf (evaluate { }) == expected "${pkgs.khal}/bin/khal" { }
+) "khalPackage must default to nixpkgs' khal and the file is written even without addresses";
+assert lib.assertMsg (
+  configOf (evaluateWith { khalPackage = pkgs.hello; } accepted)
+  == expected "${pkgs.hello}/bin/khal" accepted
+) "a custom khalPackage must be the khal written to the config";
+assert lib.assertMsg (lib.elem pkgs.hello
+  (evaluate { }).home.packages
+) "the configured package must be installed";
 
 pkgs.runCommand "mcp-khal-hm-module-check" { } "touch $out"

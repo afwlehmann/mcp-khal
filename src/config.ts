@@ -1,5 +1,4 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Effect, Result } from "effect";
 import { InvalidInput, ioError, type KhalError } from "./errors.js";
@@ -7,14 +6,34 @@ import { InvalidInput, ioError, type KhalError } from "./errors.js";
 /** calendar name -> the user's own address on that calendar */
 export type Mapping = Readonly<Record<string, string>>;
 
+export type Env = Readonly<Record<string, string | undefined>>;
+
+export interface Config {
+  /** the khal executable: a name looked up on PATH or an absolute path */
+  readonly khal: string;
+  readonly calendarEmails: Mapping;
+}
+
+export const DEFAULT_KHAL = "khal";
+export const defaultConfig: Config = { khal: DEFAULT_KHAL, calendarEmails: {} };
+
 const invalid = (message: string): InvalidInput => new InvalidInput({ message });
 
 // ---------- pure ----------
 
 export const isEmail = (s: string): boolean => /^[^\s@,;:<>]+@[^\s@,;:<>]+\.[^\s@,;:<>]+$/.test(s);
 
-export const configPath = (env: Readonly<Record<string, string | undefined>>, home: string): string =>
+export const configPath = (env: Env, home: string): string =>
   env.MCP_KHAL_CONFIG ?? join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "mcp-khal.json");
+
+/** The environment variable wins over the config file's `khal`. */
+export const resolveKhalBinary = (
+  env: Env,
+  config: Config,
+): { readonly binary: string; readonly source: "MCP_KHAL_BIN" | "config" } =>
+  env.MCP_KHAL_BIN !== undefined && env.MCP_KHAL_BIN !== ""
+    ? { binary: env.MCP_KHAL_BIN, source: "MCP_KHAL_BIN" }
+    : { binary: config.khal, source: "config" };
 
 export const parseCalendarNames = (stdout: string): string[] =>
   stdout
@@ -22,20 +41,50 @@ export const parseCalendarNames = (stdout: string): string[] =>
     .map((l) => l.trim())
     .filter((l) => l !== "");
 
-export const parseMapping = (json: string): Result.Result<Mapping, InvalidInput> =>
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const parseEmails = (raw: unknown, where: string): Result.Result<Mapping, InvalidInput> => {
+  if (!isRecord(raw)) return Result.fail(invalid(`${where} must be a JSON object of calendar name -> email`));
+  const bad = Object.entries(raw).find(([, v]) => typeof v !== "string" || !isEmail(v));
+  return bad
+    ? Result.fail(invalid(`${where} entry '${bad[0]}' is not a valid email address`))
+    : Result.succeed(raw as Mapping);
+};
+
+const parseBinary = (raw: unknown): Result.Result<string, InvalidInput> =>
+  typeof raw !== "string" || raw.trim() === "" || /[\u0000-\u001f\u007f]/.test(raw)
+    ? Result.fail(invalid("config 'khal' must be a non-empty path or command name"))
+    : Result.succeed(raw.trim());
+
+/**
+ * `{ "khal": "khal", "calendarEmails": { "work": "me@example.com" } }`; both keys are optional.
+ * A flat `{ "work": "me@example.com" }` (the format of v1.0.0) is still understood.
+ */
+export const parseConfig = (json: string): Result.Result<Config, InvalidInput> =>
   Result.gen(function* () {
     const raw = yield* Result.try({
       try: (): unknown => JSON.parse(json),
       catch: (e) => invalid(`config is not valid JSON: ${e instanceof Error ? e.message : String(e)}`),
     });
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw))
-      return yield* Result.fail(invalid("config must be a JSON object of calendar name -> email"));
-    const bad = Object.entries(raw).find(([, v]) => typeof v !== "string" || !isEmail(v));
-    if (bad) return yield* Result.fail(invalid(`config entry '${bad[0]}' is not a valid email address`));
-    return raw as Mapping;
+    if (!isRecord(raw)) return yield* Result.fail(invalid("config must be a JSON object"));
+
+    const legacy = Object.values(raw).every((v) => typeof v === "string" && isEmail(v));
+    if (legacy) return { khal: DEFAULT_KHAL, calendarEmails: raw as Mapping };
+
+    const unknown = Object.keys(raw).find((k) => k !== "khal" && k !== "calendarEmails");
+    if (unknown !== undefined)
+      return yield* Result.fail(
+        invalid(`unknown config key '${unknown}' (expected 'khal' and 'calendarEmails')`),
+      );
+    const khal = raw.khal === undefined ? DEFAULT_KHAL : yield* parseBinary(raw.khal);
+    const calendarEmails =
+      raw.calendarEmails === undefined ? {} : yield* parseEmails(raw.calendarEmails, "calendarEmails");
+    return { khal, calendarEmails };
   });
 
-export const serializeMapping = (m: Mapping): string => `${JSON.stringify(m, null, 2)}\n`;
+export const serializeConfig = (c: Config): string =>
+  `${JSON.stringify({ khal: c.khal, calendarEmails: c.calendarEmails }, null, 2)}\n`;
 
 /** Answer to a setup prompt: blank keeps the default (or skips), otherwise must be an email. */
 export const interpretAnswer = (
@@ -67,34 +116,23 @@ export const resolveAddress = (
       );
 };
 
-// ---------- effects ----------
+// ---------- effects (the path is always passed in) ----------
 
-export const defaultConfigPath = (): string => configPath(process.env, homedir());
-
-/** An explicit address never touches the config file, so a broken config can't block it. */
-export const resolveOrganizer = (
-  calendar: string | undefined,
-  explicit: string | undefined,
-): Effect.Effect<string, KhalError> =>
-  explicit !== undefined
-    ? Effect.fromResult(resolveAddress({}, calendar, explicit))
-    : Effect.flatMap(loadMapping(defaultConfigPath()), (m) => Effect.fromResult(resolveAddress(m, calendar)));
-
-/** A missing file is an empty mapping, not an error. */
-export const loadMapping = (path: string): Effect.Effect<Mapping, KhalError> =>
+/** A missing file is the default configuration, not an error. */
+export const loadConfig = (path: string): Effect.Effect<Config, KhalError> =>
   Effect.tryPromise({
     try: () => readFile(path, "utf8"),
     catch: (u) => u as NodeJS.ErrnoException,
   }).pipe(
     Effect.matchEffect({
-      onFailure: (e): Effect.Effect<Mapping, KhalError> =>
-        e.code === "ENOENT" ? Effect.succeed({}) : Effect.fail(ioError(e)),
-      onSuccess: (content): Effect.Effect<Mapping, KhalError> => Effect.fromResult(parseMapping(content)),
+      onFailure: (e): Effect.Effect<Config, KhalError> =>
+        e.code === "ENOENT" ? Effect.succeed(defaultConfig) : Effect.fail(ioError(e)),
+      onSuccess: (content): Effect.Effect<Config, KhalError> => Effect.fromResult(parseConfig(content)),
     }),
   );
 
-export const saveMapping = (path: string, m: Mapping): Effect.Effect<void, KhalError> =>
+export const saveConfig = (path: string, c: Config): Effect.Effect<void, KhalError> =>
   Effect.gen(function* () {
     yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: ioError });
-    yield* Effect.tryPromise({ try: () => writeFile(path, serializeMapping(m), "utf8"), catch: ioError });
+    yield* Effect.tryPromise({ try: () => writeFile(path, serializeConfig(c), "utf8"), catch: ioError });
   });

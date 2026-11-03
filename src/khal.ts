@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Result } from "effect";
 import { InvalidInput, ioError, type KhalError, NonZeroExit, NotInstalled, Timeout } from "./errors.js";
+import type { Settings } from "./settings.js";
 
 /** Pure validation outcome. */
 type V<A> = Result.Result<A, InvalidInput>;
@@ -135,9 +135,12 @@ const classify = (
   stdout: string,
   stderr: string,
   timeoutMs: number,
+  binary: string,
 ): KhalError =>
   e.code === "ENOENT"
-    ? new NotInstalled({ message: "khal executable not found on PATH" })
+    ? new NotInstalled({
+        message: `khal executable '${binary}' not found; install khal or set 'khal' in the config / MCP_KHAL_BIN`,
+      })
     : e.killed
       ? new Timeout({ message: `khal timed out after ${timeoutMs}ms` })
       : new NonZeroExit({
@@ -145,16 +148,25 @@ const classify = (
           message: (stderr || stdout || e.message).trim(),
         });
 
-/** Runs khal without a shell; the child is killed if the fiber is interrupted. */
-export const runKhal = (args: readonly string[], timeoutMs = 15_000): Effect.Effect<string, KhalError> =>
+/**
+ * Runs khal without a shell; the child is killed if the fiber is interrupted.
+ * Everything it needs (executable, environment, timeout) comes from `settings`.
+ */
+export const runKhal = (
+  settings: Settings,
+  args: readonly string[],
+  timeoutMs: number = settings.timeoutMs,
+): Effect.Effect<string, KhalError> =>
   Effect.callback<string, KhalError>((resume) => {
     const child = execFile(
-      "khal",
+      settings.khal,
       [...args],
-      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, LC_ALL: "C.UTF-8" } },
+      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...settings.childEnv } },
       (error, stdout, stderr) =>
         error
-          ? resume(Effect.fail(classify(error as NodeJS.ErrnoException, stdout, stderr, timeoutMs)))
+          ? resume(
+              Effect.fail(classify(error as NodeJS.ErrnoException, stdout, stderr, timeoutMs, settings.khal)),
+            )
           : resume(Effect.succeed(stdout)),
     );
     return Effect.sync(() => {
@@ -163,20 +175,24 @@ export const runKhal = (args: readonly string[], timeoutMs = 15_000): Effect.Eff
   });
 
 /** Run a validated argv. */
-export const execute = (build: V<readonly string[]>): Effect.Effect<string, KhalError> =>
-  Effect.flatMap(Effect.fromResult(build), (args) => runKhal(args));
+export const execute = (settings: Settings, build: V<readonly string[]>): Effect.Effect<string, KhalError> =>
+  Effect.flatMap(Effect.fromResult(build), (args) => runKhal(settings, args));
 
 /** Write ics to a temp dir, `khal import` it, and always clean up. */
-export const importIcs = (calendar: string | undefined, ics: string): Effect.Effect<string, KhalError> =>
+export const importIcs = (
+  settings: Settings,
+  calendar: string | undefined,
+  ics: string,
+): Effect.Effect<string, KhalError> =>
   Effect.gen(function* () {
     const cal = yield* Effect.fromResult(optional(safeToken("calendar"))(calendar));
     return yield* Effect.acquireUseRelease(
-      Effect.tryPromise({ try: () => mkdtemp(join(tmpdir(), "mcp-khal-")), catch: ioError }),
+      Effect.tryPromise({ try: () => mkdtemp(join(settings.tmpDir, "mcp-khal-")), catch: ioError }),
       (dir) =>
         Effect.gen(function* () {
           const file = join(dir, "event.ics");
           yield* Effect.tryPromise({ try: () => writeFile(file, ics, "utf8"), catch: ioError });
-          return yield* runKhal(["import", ...flag("-a", cal), "--batch", file]);
+          return yield* runKhal(settings, ["import", ...flag("-a", cal), "--batch", file]);
         }),
       (dir) =>
         Effect.tryPromise({ try: () => rm(dir, { recursive: true, force: true }), catch: ioError }).pipe(
