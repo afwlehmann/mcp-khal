@@ -148,4 +148,4 @@ After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set 
 | `conventional commits` | Pull requests only: `convco check` over the commits of the PR. |
 | `release` | On a tag `vX.Y.Z`: checks the tag equals the `package.json` version, runs `npm pack` and creates a GitHub release with generated notes and the tarball attached. Tags with a suffix such as `v1.2.0-rc.1` become pre-releases. |
 
-To release: bump `version` in `package.json`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix` and `npm` jobs succeed.
+To release: bump `version` (`npm version <major|minor|patch> --no-git-tag-version`, plus the version string in `src/server.ts`), update `npmDepsHash` in `nix/package.nix` (it also changes with the lockfile's version), commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix` and `npm` jobs succeed.
