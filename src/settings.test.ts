@@ -133,6 +133,81 @@ describe("loadSettings", () => {
     expect(e.message).toMatch(message);
   });
 
+  it("records where the config path came from and whether the file exists", async () => {
+    const present = join(dir, "present.json");
+    await writeFile(present, "{}");
+    const found = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: present })));
+    expect(found).toMatchObject({ configSource: "MCP_KHAL_CONFIG", configFound: true });
+    const missing = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: join(dir, "nope.json") })));
+    expect(missing).toMatchObject({ configSource: "MCP_KHAL_CONFIG", configFound: false });
+    expect(await runOk(loadSettings(input({ XDG_CONFIG_HOME: "/xdg" })))).toMatchObject({
+      configSource: "XDG_CONFIG_HOME",
+    });
+    expect(await runOk(loadSettings(input({})))).toMatchObject({ configSource: "default" });
+  });
+
+  it("trims the environment variables it reads", async () => {
+    const path = join(dir, "trim.json");
+    await writeFile(path, "{}");
+    const s = await runOk(
+      loadSettings(input({ MCP_KHAL_CONFIG: `  ${path}\n`, MCP_KHAL_BIN: "  /env/khal \t" })),
+    );
+    expect(s).toMatchObject({ configPath: path, khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
+  });
+
+  it("treats a blank MCP_KHAL_BIN as unset", async () => {
+    const s = await runOk(
+      loadSettings(input({ MCP_KHAL_CONFIG: join(dir, "none.json"), MCP_KHAL_BIN: "  " })),
+    );
+    expect(s).toMatchObject({ khal: "khal", khalSource: "config" });
+  });
+
+  it.each([
+    [{ MCP_KHAL_BIN: "./khal" }, /MCP_KHAL_BIN must be a bare command name/],
+    [{ MCP_KHAL_BIN: "~/bin/khal" }, /MCP_KHAL_BIN must not start with '~'/],
+    [{ MCP_KHAL_CONFIG: "relative/cfg.json" }, /MCP_KHAL_CONFIG must be an absolute path/],
+    [{ XDG_CONFIG_HOME: "relative" }, /XDG_CONFIG_HOME must be an absolute path/],
+  ])("refuses to start with an invalid environment: %j", async (env, message) => {
+    const e = await runFail(loadSettings(input(env)));
+    expect(e).toBeInstanceOf(InvalidInput);
+    expect(e.message).toMatch(message);
+  });
+
+  it("refuses a relative temporary directory", async () => {
+    const e = await runFail(loadSettings({ env: {}, home: dir, tmpDir: "tmp" }));
+    expect(e.message).toMatch(/temporary directory must be an absolute path/);
+  });
+
+  it("reports the problems of the environment and of the config file together", async () => {
+    const path = join(dir, "both.json");
+    await writeFile(path, '{"khal":"./khal","defaultAlarm":"soon","typo":1}');
+    const e = await runFail(
+      loadSettings({ env: { MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "~/khal" }, home: dir, tmpDir: "tmp" }),
+    );
+    expect(e.message).toMatch(/^5 problems:/);
+    for (const part of [
+      "MCP_KHAL_BIN must not start with '~'",
+      "temporary directory must be an absolute path",
+      "unknown config key 'typo'",
+      "config 'khal' must be a bare command name",
+      "defaultAlarm must be a reminder",
+    ])
+      expect(e.message).toContain(part);
+  });
+
+  it("reports a bad location together with the other environment problems, without reading a file", async () => {
+    const e = await runFail(
+      loadSettings({
+        env: { MCP_KHAL_CONFIG: "rel.json", MCP_KHAL_BIN: "./khal" },
+        home: dir,
+        tmpDir: "/tmp/x",
+      }),
+    );
+    expect(e.message).toMatch(/^2 problems:/);
+    expect(e.message).toContain("MCP_KHAL_CONFIG must be an absolute path");
+    expect(e.message).toContain("MCP_KHAL_BIN must be a bare command name");
+  });
+
   it("fails on a corrupt config instead of starting with guesses", async () => {
     const path = join(dir, "corrupt.json");
     await writeFile(path, "{ not json");

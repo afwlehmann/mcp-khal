@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  configPath,
+  checkBinary,
+  configLocation,
   defaultConfig,
   interpretAnswer,
   isAlarmSetting,
@@ -24,11 +25,74 @@ describe("isEmail", () => {
   });
 });
 
-describe("configPath", () => {
+describe("configLocation", () => {
   it("prefers MCP_KHAL_CONFIG, then XDG_CONFIG_HOME, then ~/.config", () => {
-    expect(configPath({ MCP_KHAL_CONFIG: "/x.json", XDG_CONFIG_HOME: "/xdg" }, "/home/u")).toBe("/x.json");
-    expect(configPath({ XDG_CONFIG_HOME: "/xdg" }, "/home/u")).toBe("/xdg/mcp-khal.json");
-    expect(configPath({}, "/home/u")).toBe("/home/u/.config/mcp-khal.json");
+    expect(
+      unwrap(configLocation({ MCP_KHAL_CONFIG: "/x.json", XDG_CONFIG_HOME: "/xdg" }, "/home/u")),
+    ).toEqual({
+      path: "/x.json",
+      source: "MCP_KHAL_CONFIG",
+    });
+    expect(unwrap(configLocation({ XDG_CONFIG_HOME: "/xdg" }, "/home/u"))).toEqual({
+      path: "/xdg/mcp-khal.json",
+      source: "XDG_CONFIG_HOME",
+    });
+    expect(unwrap(configLocation({}, "/home/u"))).toEqual({
+      path: "/home/u/.config/mcp-khal.json",
+      source: "default",
+    });
+  });
+
+  it("trims the variables and treats empty or blank ones as unset", () => {
+    expect(unwrap(configLocation({ MCP_KHAL_CONFIG: "  /x.json \n" }, "/h")).path).toBe("/x.json");
+    expect(unwrap(configLocation({ MCP_KHAL_CONFIG: "", XDG_CONFIG_HOME: "  " }, "/h")).source).toBe(
+      "default",
+    );
+  });
+
+  it("rejects relative paths, which would depend on the working directory", () => {
+    expect(failure(configLocation({ MCP_KHAL_CONFIG: "cfg.json" }, "/h"))).toEqual([
+      'MCP_KHAL_CONFIG must be an absolute path, got "cfg.json"',
+    ]);
+    expect(failure(configLocation({ XDG_CONFIG_HOME: "~/.config" }, "/h"))).toEqual([
+      'XDG_CONFIG_HOME must be an absolute path, got "~/.config"',
+    ]);
+  });
+});
+
+describe("checkBinary", () => {
+  it.each(["khal", "/usr/bin/khal", "/nix/store/x-khal/bin/khal", "/opt/My Tools/khal", "khal-2"])(
+    "accepts %j",
+    (v) => {
+      expect(unwrap(checkBinary(v, "khal"))).toBe(v);
+    },
+  );
+
+  it("trims", () => {
+    expect(unwrap(checkBinary("  /usr/bin/khal \n", "khal"))).toBe("/usr/bin/khal");
+    expect(unwrap(checkBinary(" khal ", "khal"))).toBe("khal");
+  });
+
+  it.each([
+    "",
+    "   ",
+    "./khal",
+    "bin/khal",
+    "../khal",
+    "~/bin/khal",
+    "~khal",
+    "khal --version",
+    "-khal",
+    "a\\b",
+    "kh\u0000al",
+  ])("rejects %j", (v) => {
+    const [message] = failure(checkBinary(v, "the khal path"));
+    expect(message).toMatch(/^the khal path must/);
+  });
+
+  it("explains the tilde and the relative path cases", () => {
+    expect(failure(checkBinary("~/khal", "x"))[0]).toMatch(/not expanded; use an absolute path/);
+    expect(failure(checkBinary("./khal", "x"))[0]).toMatch(/bare command name .* or an absolute path/);
   });
 });
 
@@ -94,7 +158,7 @@ describe("parseConfig / serializeConfig", () => {
     expect(failure(parseConfig('{"calendarEmails":{"work":"nope"}}')).message).toMatch(/'work'/);
     expect(failure(parseConfig('{"calendarEmails":[]}')).message).toMatch(/calendarEmails/);
     expect(failure(parseConfig('{"khal":""}')).message).toMatch(/non-empty/);
-    expect(failure(parseConfig('{"khal":42}')).message).toMatch(/non-empty/);
+    expect(failure(parseConfig('{"khal":42}')).message).toMatch(/must be a string, got 42/);
     expect(failure(parseConfig('{"khal":"kh\\nal"}')).message).toMatch(/non-empty/);
     expect(failure(parseConfig('{"khal":"khal","typo":1}')).message).toMatch(/unknown config key 'typo'/);
   });
@@ -188,6 +252,103 @@ describe("reminders in the config", () => {
 
   it("are not mistaken for the flat v1.0.0 mapping", () => {
     expect(unwrap(parseConfig('{"defaultAlarm":"15m"}')).defaultAlarm).toBe("15m");
+  });
+});
+
+describe("trimming", () => {
+  it("trims every string of the config before checking it", () => {
+    const c = unwrap(
+      parseConfig(
+        JSON.stringify({
+          khal: "  /usr/bin/khal\n",
+          calendarEmails: { " work ": "  me@work.com ", "\thome": "me@home.org\n" },
+          defaultAlarm: " 15m ",
+          calendarAlarms: { " work": "\t1d", "home ": " none " },
+        }),
+      ),
+    );
+    expect(c).toEqual({
+      khal: "/usr/bin/khal",
+      calendarEmails: { work: "me@work.com", home: "me@home.org" },
+      defaultAlarm: "15m",
+      calendarAlarms: { work: "1d", home: "none" },
+    });
+  });
+
+  it("does not trim inside a value: '5 m' stays invalid", () => {
+    expect(failure(parseConfig('{"defaultAlarm":" 5 m "}')).message).toMatch(/defaultAlarm must be/);
+  });
+
+  it("rejects names that are only whitespace", () => {
+    expect(failure(parseConfig('{"calendarEmails":{"  ":"me@work.com"}}')).message).toMatch(
+      /calendarEmails has an empty calendar name/,
+    );
+  });
+
+  it("rejects two names that only differ in whitespace", () => {
+    expect(failure(parseConfig('{"calendarAlarms":{"work":"1d"," work ":"2d"}}')).message).toMatch(
+      /calendarAlarms lists calendar 'work' more than once \(names are compared after trimming\)/,
+    );
+  });
+
+  it("trims the organizer and the calendar when resolving an address", () => {
+    expect(unwrap(resolveAddress({ work: "me@work.com" }, "  work ", undefined))).toBe("me@work.com");
+    expect(unwrap(resolveAddress({}, "work", "  a@b.com \n"))).toBe("a@b.com");
+  });
+
+  it("trims an explicit alarm and the calendar when resolving a reminder", () => {
+    const settings = { defaultAlarm: "15m", calendarAlarms: { work: "1d" } };
+    expect(resolveAlarm(settings, " work ", undefined)).toBe("1d");
+    expect(resolveAlarm(settings, "work", " 5m ")).toBe("5m");
+    expect(resolveAlarm(settings, "work", " none ")).toBeUndefined();
+  });
+});
+
+describe("reporting all problems at once", () => {
+  it("lists every invalid value of the file, not only the first", () => {
+    const e = failure(
+      parseConfig(
+        JSON.stringify({
+          khal: "./khal",
+          calendarEmails: { work: "nope", home: "also nope" },
+          defaultAlarm: "soon",
+          calendarAlarms: { work: "1w", home: "1d" },
+          typo: 1,
+          another: 2,
+        }),
+      ),
+    );
+    expect(e._tag).toBe("InvalidInput");
+    expect(e.message).toMatch(/^7 problems:\n/);
+    for (const part of [
+      "unknown config key 'typo'",
+      "unknown config key 'another'",
+      "config 'khal' must be a bare command name",
+      "calendarEmails entry 'work' is not a valid email address",
+      "calendarEmails entry 'home' is not a valid email address",
+      "defaultAlarm must be a reminder like 30m",
+      "calendarAlarms entry 'work' must be a reminder like 30m",
+    ])
+      expect(e.message).toContain(part);
+    // the valid entry is not reported
+    expect(e.message).not.toContain("calendarAlarms entry 'home'");
+  });
+
+  it("reports several problems inside one map", () => {
+    const e = failure(parseConfig('{"calendarAlarms":{"a":"x","b":"y","c":"1d","":"2d"}}'));
+    expect(e.message).toMatch(/^3 problems:/);
+  });
+
+  it("reports one problem as a plain message, without a list", () => {
+    expect(failure(parseConfig('{"defaultAlarm":"soon"}')).message).toMatch(/^defaultAlarm must be/);
+  });
+
+  it("keeps the dependency between steps: not JSON means only that one problem", () => {
+    expect(failure(parseConfig("{ nope")).message).toMatch(/^config is not valid JSON/);
+  });
+
+  it("also covers the flat v1.0.0 format", () => {
+    expect(unwrap(parseConfig('{" work ":" me@work.com "}')).calendarEmails).toEqual({ work: "me@work.com" });
   });
 });
 

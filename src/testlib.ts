@@ -59,6 +59,8 @@ export const testSettings = (overrides: Partial<Settings> = {}): Settings => ({
   defaultAlarm: "none",
   calendarAlarms: {},
   configPath: join(tmpdir(), "mcp-khal-tests-no-such-dir", "mcp-khal.json"),
+  configSource: "default",
+  configFound: true,
   childEnv: { PATH: process.env.PATH },
   tmpDir: tmpdir(),
   timeoutMs: 15_000,
@@ -71,6 +73,8 @@ export interface FakeKhalOptions {
   readonly exit?: number;
   /** seconds to sleep before answering, to provoke timeouts */
   readonly sleep?: number;
+  /** exit with 1 and the stderr text when the first argument is this subcommand; others succeed */
+  readonly failOn?: string;
 }
 
 export interface FakeKhal {
@@ -95,6 +99,7 @@ export const fakeKhal = async (opts: FakeKhalOptions = {}): Promise<FakeKhal> =>
 printf '%s' "\${MCP_TEST_MARK-unset}" > "${dir}/mark"
 if [ "$1" = "import" ]; then for last; do :; done; cp "$last" "${dir}/imported.ics"; fi
 if [ -f "${dir}/sleep" ]; then sleep "$(cat "${dir}/sleep")"; fi
+if [ -f "${dir}/failon" ] && [ "$1" = "$(cat "${dir}/failon")" ]; then cat "${dir}/err" >&2; exit 1; fi
 cat "${dir}/out"
 cat "${dir}/err" >&2
 exit "$(cat "${dir}/exit")"
@@ -103,6 +108,7 @@ exit "$(cat "${dir}/exit")"
   await writeFile(join(dir, "err"), opts.stderr ?? "");
   await writeFile(join(dir, "exit"), String(opts.exit ?? 0));
   if (opts.sleep !== undefined) await writeFile(join(dir, "sleep"), String(opts.sleep));
+  if (opts.failOn !== undefined) await writeFile(join(dir, "failon"), opts.failOn);
   await writeFile(join(dir, "khal"), script);
   await chmod(join(dir, "khal"), 0o755);
 

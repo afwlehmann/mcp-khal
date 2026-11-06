@@ -100,8 +100,8 @@ export const toIcsParams = (p: NewIcsEvent): V<IcsEventParams> =>
       location: p.location,
       description: p.description,
       alarm: p.alarm,
-      organizer: p.organizer,
-      attendees: p.attendees,
+      organizer: p.organizer?.trim(),
+      attendees: p.attendees?.map((a) => a.trim()),
     };
   });
 
