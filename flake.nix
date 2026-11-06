@@ -14,8 +14,8 @@
       git-hooks,
     }:
     let
+      # nixpkgs 26.11 dropped x86_64-darwin; Intel Macs would need a 26.05-based nixpkgs
       supportedSystems = [
-        "x86_64-darwin"
         "aarch64-darwin"
         "x86_64-linux"
         "aarch64-linux"

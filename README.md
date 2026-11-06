@@ -103,6 +103,8 @@ The flake exposes:
 | `overlays.default` | Adds `pkgs.mcp-khal`. |
 | `homeModules.default` | The Home Manager module `programs.mcp-khal`. |
 
+Supported systems: `aarch64-darwin`, `x86_64-linux` and `aarch64-linux`. `x86_64-darwin` (Intel Macs) is not supported because the pinned nixpkgs dropped it; it would need a nixpkgs 26.05 based input.
+
 ### Home Manager module
 Add the flake as an input, import the module and enable it:
 
