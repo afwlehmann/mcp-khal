@@ -82,7 +82,7 @@ A ready-to-copy version is installed with the package at `share/doc/mcp-khal/exa
 | `defaultAlarm` | `"none"` | Reminder for new events that name none and whose calendar has no entry in `calendarAlarms`. See [Reminders](#reminders). |
 | `calendarAlarms` | `{ }` | Calendar name → reminder for new events on that calendar, overriding `defaultAlarm`. `none` means no reminder on that calendar. |
 
-Reminders are `<n>m`, `<n>h` or `<n>d` (n from 0 to 9999; lowercase unit, no spaces) or `none`. They are validated when the config is read, and an invalid value stops the server at startup naming the key and the value. These are rejected: `15` (no unit), `-5m` (negative), `1w`, `1.5d`, `5 m`, `5M`, `None`, `1d2h`, an empty string and anything that is not a string.
+Reminders are `<n>m`, `<n>h` or `<n>d` (n from 0 to 9999; lowercase unit, no spaces inside) or `none`. They are validated when the config is read (see [Validation at startup](#validation-at-startup)), and an invalid value stops the server at startup naming the key and the value. These are rejected: `15` (no unit), `-5m` (negative), `1w`, `1.5d`, `5 m`, `5M`, `None`, `1d2h`, an empty string and anything that is not a string.
 
 | Environment variable | Meaning |
 |---|---|
@@ -92,7 +92,34 @@ Reminders are `<n>m`, `<n>h` or `<n>d` (n from 0 to 9999; lowercase unit, no spa
 
 At startup the server logs its effective configuration as one line on stderr (stdout carries the MCP protocol): the config file path, the khal executable and whether it came from `MCP_KHAL_BIN` or the config, the timeout, the reminders and the calendar names. Addresses are masked (`m***@work.com`), values of secret-looking keys (`token`, `password`, `secret`, `api key`, …) and credentials inside URLs are redacted, and the process environment is never logged.
 
-A config in the flat `{ "work": "me@example.com" }` format of v1.0.0 is still read. An unreadable or invalid config stops the server at startup with a message on stderr, instead of failing later on every call.
+A config in the flat `{ "work": "me@example.com" }` format of v1.0.0 is still read.
+
+#### Validation at startup
+The server checks its configuration when it starts and refuses to start (exit code 1, message on stderr) if anything is wrong, instead of failing later on every call. Nothing is guessed. It reports every problem at once; for example:
+
+```
+mcp-khal cannot start: InvalidInput: 3 problems:
+- MCP_KHAL_BIN must not start with '~', which is not expanded; use an absolute path (got ~/khal)
+- defaultAlarm must be a reminder like 30m, 2h or 1d (minutes, hours, days before the start), or 'none', got "soon"
+- calendarEmails entry 'work' is not a valid email address
+```
+
+All strings from the environment and the config file are trimmed before they are checked, so `" 15m "` is `15m`. Whitespace inside a value is not removed (`5 m` is invalid), and an environment variable that is empty or only whitespace counts as unset.
+
+First, the values themselves:
+- **JSON and keys:** the file must be valid JSON with only the keys above; a typo such as `calendarEmail` is an error, not silently ignored.
+- **`khal` and `MCP_KHAL_BIN`:** a bare command name (looked up on `PATH`) or an absolute path. Relative paths (`./khal`, `bin/khal`), `~` (never expanded), names with spaces or a leading `-`, and control characters are rejected.
+- **`MCP_KHAL_CONFIG` and `XDG_CONFIG_HOME`:** absolute paths.
+- **Calendar names** (keys of `calendarEmails` and `calendarAlarms`): not empty, no control characters, and unique after trimming.
+- **Addresses** must look like email addresses, **reminders** like the table above.
+
+Then the values against the machine:
+- the khal executable runs (`khal --version`) and can list its calendars,
+- every calendar named in `calendarEmails` or `calendarAlarms` exists in khal (the message lists the calendars khal has, which catches typos),
+- the temporary directory exists and is writable,
+- a config file named explicitly by `MCP_KHAL_CONFIG` exists (the default location may be missing: that means the defaults).
+
+`mcp-khal setup` applies the first group but not the machine checks, so it can still be used to repair a configuration that names calendars khal no longer has.
 
 ## Nix / Home Manager
 The flake exposes:

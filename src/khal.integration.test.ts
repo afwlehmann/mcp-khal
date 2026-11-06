@@ -8,10 +8,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig, serializeConfig } from "./config.js";
 import type { KhalEvent } from "./khal.js";
 import { runKhal } from "./khal.js";
+import { preflight } from "./preflight.js";
 import { createServer } from "./server.js";
 import { loadSettings, type Settings } from "./settings.js";
 import { runSetup } from "./setup.js";
-import { runOk, unfold } from "./testlib.js";
+import { runFail, runOk, unfold } from "./testlib.js";
 
 // Integration tests against the REAL khal. Run them inside the dev shell:
 //
@@ -375,6 +376,31 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(trigger).toMatch(ZERO_TRIGGER);
       const listed = await events("list_events", { range: "2030-02-04", calendar: "work" });
       expect(listed.map((e) => e.title)).toContain("Zero series");
+    });
+  });
+
+  describe("startup checks against the real khal", () => {
+    it("pass for the sandbox configuration: khal runs, its calendars match, tmp is writable", async () => {
+      await runOk(preflight(settings));
+    });
+
+    it("catch a calendar name that khal does not have, and list the ones it has", async () => {
+      const e = await runFail(
+        preflight({ ...settings, calendarEmails: { ...settings.calendarEmails, wrok: "me@work.com" } }),
+      );
+      expect(e.message).toMatch(
+        /^the config names calendars that khal does not know: wrok \(khal has: (home, work|work, home)\)$/,
+      );
+    });
+
+    it("catch a khal path that does not exist", async () => {
+      const e = await runFail(preflight({ ...settings, khal: join(root, "no-such-khal") }));
+      expect(e.message).toMatch(/cannot be run: NotInstalled/);
+    });
+
+    it("catch a temporary directory that is missing", async () => {
+      const e = await runFail(preflight({ ...settings, tmpDir: join(root, "no-such-tmp") }));
+      expect(e.message).toMatch(/does not exist or is not writable/);
     });
   });
 

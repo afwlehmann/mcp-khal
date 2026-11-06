@@ -82,17 +82,13 @@ describe("the server process finds khal through its configuration", () => {
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toBe("work\n");
   });
-
-  it("names the configured binary when it cannot be found", async () => {
-    const r = await listCalendars("/does/not/exist/khal");
-    expect(isError(r)).toBe(true);
-    expect(textOf(r)).toMatch(/NotInstalled: khal executable '\/does\/not\/exist\/khal' not found/);
-  });
 });
 
 describe("the server process logs its configuration at startup", () => {
   it("writes one line to stderr with the effective khal and masked addresses, never the environment", async () => {
     const dir = await tempDir();
+    const fake = await fakeKhal({ stdout: "work\n" });
+    const khalBin = join(fake.dir, "khal");
     const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });
     let serverLog = "";
     try {
@@ -112,7 +108,7 @@ describe("the server process logs its configuration at startup", () => {
         env: {
           PATH: process.env.PATH ?? "",
           MCP_KHAL_CONFIG: config,
-          MCP_KHAL_BIN: "/env/khal",
+          MCP_KHAL_BIN: khalBin,
           API_TOKEN: "t0ps3cret",
         },
         stderr: "pipe",
@@ -122,13 +118,14 @@ describe("the server process logs its configuration at startup", () => {
       });
       await client.connect(transport);
       await vi.waitFor(() => expect(serverLog).toMatch(/mcp-khal starting with configuration/));
-      expect(serverLog).toContain('"binary":"/env/khal","source":"MCP_KHAL_BIN"');
+      expect(serverLog).toContain(`"binary":${JSON.stringify(khalBin)},"source":"MCP_KHAL_BIN"`);
       expect(serverLog).toContain(`"configPath":${JSON.stringify(config)}`);
       expect(serverLog).toContain("m***@work.com");
       expect(serverLog).not.toContain("me@work.com");
       expect(serverLog).not.toContain("t0ps3cret");
     } finally {
       await client.close();
+      await fake.cleanup();
       await removeDir(dir);
     }
   });
@@ -165,6 +162,94 @@ describe("cli", () => {
     } finally {
       await removeDir(dir);
     }
+  });
+
+  describe("the server checks its configuration at startup and refuses to start", () => {
+    let fake: FakeKhal;
+    let dir: string;
+
+    beforeAll(async () => {
+      fake = await fakeKhal({ stdout: "work\nhome\n" });
+      dir = await tempDir();
+    });
+    afterAll(async () => {
+      await fake.cleanup();
+      await removeDir(dir);
+    });
+
+    const configWith = async (name: string, content: object): Promise<string> => {
+      const path = join(dir, name);
+      await writeFile(path, JSON.stringify(content));
+      return path;
+    };
+
+    it("when khal cannot be found, naming the configured binary", async () => {
+      const config = await configWith("no-khal.json", { khal: "/does/not/exist/khal" });
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(
+        /mcp-khal cannot start: InvalidInput: khal \(\/does\/not\/exist\/khal, from config\) cannot be run: NotInstalled: khal executable '\/does\/not\/exist\/khal' not found/,
+      );
+    });
+
+    it("when the config names a calendar that khal does not have", async () => {
+      const config = await configWith("typo.json", {
+        khal: join(fake.dir, "khal"),
+        calendarEmails: { wrok: "me@work.com" },
+      });
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(
+        /the config names calendars that khal does not know: wrok \(khal has: work, home\)/,
+      );
+    });
+
+    it("when MCP_KHAL_CONFIG names a file that does not exist", async () => {
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: join(dir, "missing.json") });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/MCP_KHAL_CONFIG points to .*missing\.json, which does not exist/);
+    });
+
+    it("listing every problem, not only the first", async () => {
+      const config = await configWith("many.json", {
+        khal: "./khal",
+        defaultAlarm: "soon",
+        calendarEmails: { work: "nope" },
+      });
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config, MCP_KHAL_BIN: "~/khal" });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/mcp-khal cannot start: InvalidInput: 4 problems:/);
+      for (const part of [
+        "MCP_KHAL_BIN must not start with '~'",
+        "config 'khal' must be a bare command name",
+        "defaultAlarm must be a reminder",
+        "calendarEmails entry 'work' is not a valid email address",
+      ])
+        expect(r.stderr).toContain(part);
+    });
+
+    it("but starts when everything checks out", async () => {
+      const config = await configWith("fine.json", {
+        khal: join(fake.dir, "khal"),
+        calendarEmails: { work: " me@work.com " },
+        defaultAlarm: " 15m ",
+        calendarAlarms: { " home ": "none" },
+      });
+      const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });
+      try {
+        await client.connect(
+          new StdioClientTransport({
+            command: process.execPath,
+            args: [CLI],
+            env: { PATH: process.env.PATH ?? "", MCP_KHAL_CONFIG: config },
+          }),
+        );
+        const r = await client.callTool({ name: "list_calendars", arguments: {} });
+        expect(isError(r)).toBe(false);
+      } finally {
+        await client.close();
+      }
+    });
   });
 
   it("the server refuses to start on a corrupt config and says why", async () => {
