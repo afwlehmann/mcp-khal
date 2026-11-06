@@ -55,6 +55,9 @@ local_timezone = UTC
 default_timezone = UTC
 `;
 
+// A reminder "at the start": khal normalises it to P0D (what we write for imports is -PT0M)
+const ZERO_TRIGGER = /^-?(PT0[MS]|P0D)$/;
+
 const textOf = (r: unknown): string =>
   ((r as { content: { text?: string }[] }).content ?? []).map((c) => c.text ?? "").join("");
 const isError = (r: unknown): boolean => (r as { isError?: boolean }).isError === true;
@@ -75,6 +78,19 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
     return JSON.parse(r.text) as KhalEvent[];
   };
 
+  /** the .ics file khal stored in the sandbox for the event with this summary (unfolded) */
+  const storedIcs = async (calendar: string, summary: string): Promise<string> => {
+    const dir = join(root, "calendars", calendar);
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".ics"));
+    const all = await Promise.all(files.map(async (f) => unfold(await readFile(join(dir, f), "utf8"))));
+    const found = all.find((content) => content.includes(`SUMMARY:${summary}`));
+    expect(found, `no stored event "${summary}" in ${calendar}`).toBeDefined();
+    return found ?? "";
+  };
+  /** the values of all TRIGGER properties, e.g. ["-PT30M"] */
+  const triggers = (ics: string): string[] =>
+    [...ics.matchAll(/^TRIGGER[^:\r\n]*:([^\r\n]+)/gm)].map((m) => m[1] ?? "");
+
   beforeAll(async () => {
     // realpath: on macOS the temp directory is a symlink and khal prints resolved paths
     root = await realpath(await mkdtemp(join(tmpdir(), "mcp-khal-it-")));
@@ -83,7 +99,13 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
     await writeFile(join(root, "config", "khal", "config"), khalConfig(root));
     await writeFile(
       join(root, "config", "mcp-khal.json"),
-      serializeConfig({ khal: "khal", calendarEmails: { work: "me@work.com" } }),
+      serializeConfig({
+        khal: "khal",
+        calendarEmails: { work: "me@work.com" },
+        // work has its own reminder, home explicitly none, the default applies to everything else
+        defaultAlarm: "1d",
+        calendarAlarms: { work: "30m", home: "none" },
+      }),
     );
 
     env = sandboxEnv(root, process.env.PATH ?? "");
@@ -268,6 +290,94 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
     });
   });
 
+  describe("default reminders (work: 30m, home: none, everything else: 1d)", () => {
+    const base = { start: "2030-02-04 10:00", end: "11:00" };
+    const create = async (args: Record<string, unknown>) => {
+      const r = await call("new_event", { ...base, ...args });
+      expect(r.error, r.text).toBe(false);
+    };
+
+    it("applies the calendar's reminder to a plain event created through khal new", async () => {
+      await create({ calendar: "work", summary: "Plain on work" });
+      expect(triggers(await storedIcs("work", "Plain on work"))).toEqual(["-PT30M"]);
+    });
+
+    it("applies the calendar's reminder to an imported series", async () => {
+      await create({
+        calendar: "work",
+        summary: "Series on work",
+        recurrence: { pattern: { kind: "daily" }, ending: { kind: "count", count: 2 } },
+      });
+      expect(triggers(await storedIcs("work", "Series on work"))).toEqual(["-PT30M"]);
+    });
+
+    it("applies the calendar's reminder to an imported invite", async () => {
+      await create({ calendar: "work", summary: "Invite on work", attendees: ["you@example.com"] });
+      expect(triggers(await storedIcs("work", "Invite on work"))).toEqual(["-PT30M"]);
+    });
+
+    it("adds no reminder on a calendar configured with 'none', on either path", async () => {
+      await create({ calendar: "home", summary: "Plain on home" });
+      expect(triggers(await storedIcs("home", "Plain on home"))).toEqual([]);
+      await create({
+        calendar: "home",
+        summary: "Series on home",
+        recurrence: { pattern: { kind: "daily" } },
+      });
+      expect(triggers(await storedIcs("home", "Series on home"))).toEqual([]);
+    });
+
+    it("lets an explicit alarm override the calendar's reminder, in days and in minutes", async () => {
+      await create({ calendar: "work", summary: "Explicit days plain", alarm: "1d" });
+      expect(triggers(await storedIcs("work", "Explicit days plain"))).toEqual(["-P1D"]);
+      await create({
+        calendar: "work",
+        summary: "Explicit minutes series",
+        alarm: "10m",
+        recurrence: { pattern: { kind: "daily" } },
+      });
+      expect(triggers(await storedIcs("work", "Explicit minutes series"))).toEqual(["-PT10M"]);
+    });
+
+    it("lets an explicit 'none' suppress the configured reminder, on either path", async () => {
+      await create({ calendar: "work", summary: "None plain", alarm: "none" });
+      expect(triggers(await storedIcs("work", "None plain"))).toEqual([]);
+      await create({
+        calendar: "work",
+        summary: "None series",
+        alarm: "none",
+        recurrence: { pattern: { kind: "daily" } },
+      });
+      expect(triggers(await storedIcs("work", "None series"))).toEqual([]);
+    });
+
+    it("uses the default reminder when no calendar is named (khal files it in its default calendar)", async () => {
+      await create({ summary: "No calendar named" });
+      expect(triggers(await storedIcs("work", "No calendar named"))).toEqual(["-P1D"]);
+    });
+
+    it("accepts a reminder of 0m (at the start) through khal new", async () => {
+      await create({ calendar: "work", summary: "Zero plain", alarm: "0m" });
+      const [trigger, ...rest] = triggers(await storedIcs("work", "Zero plain"));
+      expect(rest).toEqual([]);
+      expect(trigger).toMatch(ZERO_TRIGGER);
+    });
+
+    it("accepts a reminder of 0m (at the start) in an imported series", async () => {
+      await create({
+        calendar: "work",
+        summary: "Zero series",
+        alarm: "0m",
+        recurrence: { pattern: { kind: "daily" } },
+      });
+      const [trigger, ...rest] = triggers(await storedIcs("work", "Zero series"));
+      expect(rest).toEqual([]);
+      expect(trigger).toMatch(ZERO_TRIGGER);
+      const listed = await events("list_events", { range: "2030-02-04", calendar: "work" });
+      expect(listed.map((e) => e.title)).toContain("Zero series");
+    });
+  });
+
   describe("what khal left behind", () => {
     it("keeps its database and every calendar file inside the sandbox", async () => {
       // where exactly depends on the platform (XDG on Linux, ~/Library/Application Support on macOS),
@@ -316,6 +426,8 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(await runOk(loadConfig(setupConfig))).toEqual({
         khal: "khal",
         calendarEmails: { home: "me@home.org", work: "me@work.com" },
+        defaultAlarm: "none",
+        calendarAlarms: {},
       });
     });
   });

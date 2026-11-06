@@ -70,7 +70,12 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
       summary: z.string(),
       location: z.string().optional(),
       description: z.string().optional(),
-      alarm: z.string().optional().describe("Alarm offset, e.g. '15m'"),
+      alarm: z
+        .string()
+        .optional()
+        .describe(
+          "Reminder before the start, e.g. '15m', '2h', '1d'. Omit it to get the default configured for the calendar (often none); use 'none' for no reminder at all",
+        ),
       recurrence: RecurrenceSpec.optional(),
       attendees: z
         .array(z.string())

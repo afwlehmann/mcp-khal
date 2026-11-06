@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { resolveAddress } from "./config.js";
+import { resolveAddress, resolveAlarm } from "./config.js";
 import { InvalidInput, type KhalError } from "./errors.js";
 import { execute, importIcs, type NewParams, newArgs } from "./khal.js";
 import { buildIcs, type RecurrenceSpec, toIcsParams } from "./recurrence.js";
@@ -31,12 +31,16 @@ export const newEvent = (
   const invited = attendees.length > 0;
   if (!invited && organizer !== undefined)
     return Effect.fail(new InvalidInput({ message: "organizer is only valid together with attendees" }));
-  if (!invited && recurrence === undefined) return execute(settings, newArgs(p));
+  // an explicit alarm wins, then the calendar's setting, then the default; `none` means no reminder
+  const withAlarm = { ...p, alarm: resolveAlarm(settings, p.calendar, p.alarm) };
+  if (!invited && recurrence === undefined) return execute(settings, newArgs(withAlarm));
   return Effect.gen(function* () {
     const from = invited
       ? yield* Effect.fromResult(resolveAddress(settings.calendarEmails, p.calendar, organizer))
       : undefined;
-    const params = yield* Effect.fromResult(toIcsParams({ ...p, recurrence, attendees, organizer: from }));
+    const params = yield* Effect.fromResult(
+      toIcsParams({ ...withAlarm, recurrence, attendees, organizer: from }),
+    );
     const ics = yield* Effect.fromResult(buildIcs(params, `${uid}@mcp-khal`, timestamp(now)));
     return yield* importIcs(settings, p.calendar, ics);
   });

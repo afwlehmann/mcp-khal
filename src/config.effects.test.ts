@@ -19,7 +19,12 @@ describe("config files", () => {
 
   it("saves (creating parent directories) and loads a config", async () => {
     const path = join(dir, "nested", "deeper", "cfg.json");
-    const c = { khal: "/opt/khal/bin/khal", calendarEmails: { work: "me@work.com", home: "me@home.org" } };
+    const c = {
+      khal: "/opt/khal/bin/khal",
+      calendarEmails: { work: "me@work.com", home: "me@home.org" },
+      defaultAlarm: "none",
+      calendarAlarms: {},
+    };
     await runOk(saveConfig(path, c));
     expect(await readFile(path, "utf8")).toBe(serializeConfig(c));
     expect(await runOk(loadConfig(path))).toEqual(c);
@@ -28,7 +33,12 @@ describe("config files", () => {
   it("loads a flat v1.0.0 mapping", async () => {
     const path = join(dir, "legacy.json");
     await writeFile(path, '{"work":"me@work.com"}');
-    expect(await runOk(loadConfig(path))).toEqual({ khal: "khal", calendarEmails: { work: "me@work.com" } });
+    expect(await runOk(loadConfig(path))).toEqual({
+      khal: "khal",
+      calendarEmails: { work: "me@work.com" },
+      defaultAlarm: "none",
+      calendarAlarms: {},
+    });
   });
 
   it("reports invalid content as InvalidInput", async () => {

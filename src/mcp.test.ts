@@ -47,7 +47,15 @@ describe("the server process finds khal through its configuration", () => {
   /** khal is deliberately NOT on PATH: only the config or the environment can locate it. */
   const listCalendars = async (khalInConfig: string, extraEnv: Record<string, string> = {}) => {
     const config = join(dir, "cfg.json");
-    await writeFile(config, serializeConfig({ khal: khalInConfig, calendarEmails: { work: "me@work.com" } }));
+    await writeFile(
+      config,
+      serializeConfig({
+        khal: khalInConfig,
+        calendarEmails: { work: "me@work.com" },
+        defaultAlarm: "none",
+        calendarAlarms: {},
+      }),
+    );
     const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });
     try {
       await client.connect(
@@ -91,7 +99,12 @@ describe("the server process logs its configuration at startup", () => {
       const config = join(dir, "cfg.json");
       await writeFile(
         config,
-        serializeConfig({ khal: "/cfg/khal", calendarEmails: { work: "me@work.com" } }),
+        serializeConfig({
+          khal: "/cfg/khal",
+          calendarEmails: { work: "me@work.com" },
+          defaultAlarm: "none",
+          calendarAlarms: {},
+        }),
       );
       const transport = new StdioClientTransport({
         command: process.execPath,
@@ -137,6 +150,21 @@ describe("cli", () => {
     });
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/InvalidInput: setup needs an interactive terminal/);
+  });
+
+  it("the server refuses to start on an invalid reminder and names the key", async () => {
+    const dir = await tempDir();
+    try {
+      const config = join(dir, "bad-alarm.json");
+      await writeFile(config, '{"calendarAlarms":{"work":"in an hour"}}');
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(
+        /mcp-khal cannot start: InvalidInput: calendarAlarms entry 'work' must be a reminder like 30m, 2h or 1d/,
+      );
+    } finally {
+      await removeDir(dir);
+    }
   });
 
   it("the server refuses to start on a corrupt config and says why", async () => {

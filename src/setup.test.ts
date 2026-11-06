@@ -96,7 +96,12 @@ describe("setup", () => {
     const path = join(dir, "cfg.json");
     await writeFile(
       path,
-      serializeConfig({ khal: "/opt/khal/bin/khal", calendarEmails: { work: "old@work.com" } }),
+      serializeConfig({
+        khal: "/opt/khal/bin/khal",
+        calendarEmails: { work: "old@work.com" },
+        defaultAlarm: "none",
+        calendarAlarms: {},
+      }),
     );
     const s = scripted(["", ""]);
     const t = io(s);
@@ -105,6 +110,8 @@ describe("setup", () => {
     expect(await runOk(loadConfig(path))).toEqual({
       khal: "/opt/khal/bin/khal",
       calendarEmails: { work: "old@work.com", "me@home.org": "me@home.org" },
+      defaultAlarm: "none",
+      calendarAlarms: {},
     });
     expect(s.prefills).toEqual(["old@work.com", "me@home.org"]);
     expect(t.closed()).toBe(1);
@@ -114,7 +121,10 @@ describe("setup", () => {
 
   it("never writes an MCP_KHAL_BIN override back into the config file", async () => {
     const path = join(dir, "cfg.json");
-    await writeFile(path, serializeConfig({ khal: "khal", calendarEmails: {} }));
+    await writeFile(
+      path,
+      serializeConfig({ khal: "khal", calendarEmails: {}, defaultAlarm: "none", calendarAlarms: {} }),
+    );
     const settings = fake.settings({ configPath: path, khalSource: "MCP_KHAL_BIN" });
     await runOk(setup(settings, io(scripted(["", ""])).io));
     expect((await runOk(loadConfig(path))).khal).toBe("khal");
@@ -173,6 +183,8 @@ describe("runSetup", () => {
     expect(await runOk(loadConfig(join(dir, "cfg.json")))).toEqual({
       khal: "khal",
       calendarEmails: { work: "me@work.com" },
+      defaultAlarm: "none",
+      calendarAlarms: {},
     });
     expect(lines).toHaveLength(2);
   });

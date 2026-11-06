@@ -7,7 +7,12 @@ import { buildSettings, DEFAULT_TIMEOUT_MS, loadSettings } from "./settings.js";
 import { removeDir, runFail, runOk, tempDir } from "./testlib.js";
 
 describe("buildSettings", () => {
-  const config = { khal: "/cfg/khal", calendarEmails: { work: "me@work.com" } };
+  const config = {
+    khal: "/cfg/khal",
+    calendarEmails: { work: "me@work.com" },
+    defaultAlarm: "none",
+    calendarAlarms: {},
+  };
   const build = (env: Record<string, string | undefined>) =>
     buildSettings({ env, config, configPath: "/c.json", tmpDir: "/tmp/x" });
 
@@ -21,6 +26,21 @@ describe("buildSettings", () => {
       tmpDir: "/tmp/x",
       timeoutMs: DEFAULT_TIMEOUT_MS,
     });
+  });
+
+  it("carries the configured reminders into the settings", () => {
+    const s = buildSettings({
+      env: {},
+      config: {
+        ...config,
+        defaultAlarm: "15m",
+        calendarAlarms: { work: "1d", home: "none" },
+      },
+      configPath: "/c.json",
+      tmpDir: "/tmp/x",
+    });
+    expect(s.defaultAlarm).toBe("15m");
+    expect(s.calendarAlarms).toEqual({ work: "1d", home: "none" });
   });
 
   it("lets MCP_KHAL_BIN override the config", () => {
@@ -55,7 +75,15 @@ describe("loadSettings", () => {
 
   it("reads the config file named by MCP_KHAL_CONFIG exactly once into the settings", async () => {
     const path = join(dir, "cfg.json");
-    await writeFile(path, serializeConfig({ khal: "/cfg/khal", calendarEmails: { work: "me@work.com" } }));
+    await writeFile(
+      path,
+      serializeConfig({
+        khal: "/cfg/khal",
+        calendarEmails: { work: "me@work.com" },
+        defaultAlarm: "none",
+        calendarAlarms: {},
+      }),
+    );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
     expect(s).toMatchObject({ khal: "/cfg/khal", calendarEmails: { work: "me@work.com" }, configPath: path });
   });
@@ -74,9 +102,35 @@ describe("loadSettings", () => {
 
   it("applies MCP_KHAL_BIN on top of the file", async () => {
     const path = join(dir, "cfg2.json");
-    await writeFile(path, serializeConfig({ khal: "/cfg/khal", calendarEmails: {} }));
+    await writeFile(
+      path,
+      serializeConfig({ khal: "/cfg/khal", calendarEmails: {}, defaultAlarm: "none", calendarAlarms: {} }),
+    );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "/env/khal" })));
     expect(s).toMatchObject({ khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
+  });
+
+  it("reads default and per-calendar reminders from the file", async () => {
+    const path = join(dir, "alarms.json");
+    await writeFile(path, '{"defaultAlarm":"15m","calendarAlarms":{"work":"1d","home":"none"}}');
+    const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
+    expect(s.defaultAlarm).toBe("15m");
+    expect(s.calendarAlarms).toEqual({ work: "1d", home: "none" });
+  });
+
+  it.each([
+    ['{"defaultAlarm":"15"}', /defaultAlarm must be a reminder like 30m, 2h or 1d/],
+    ['{"defaultAlarm":"1w"}', /defaultAlarm must be/],
+    ['{"defaultAlarm":15}', /defaultAlarm must be/],
+    ['{"calendarAlarms":{"work":"soon"}}', /calendarAlarms entry 'work' must be/],
+    ['{"calendarAlarms":{"work":"1d","home":"-5m"}}', /calendarAlarms entry 'home' must be/],
+    ['{"calendarAlarms":"15m"}', /calendarAlarms must be a JSON object/],
+  ])("refuses to start with an invalid reminder in the config: %s", async (content, message) => {
+    const path = join(dir, "bad-alarm.json");
+    await writeFile(path, content);
+    const e = await runFail(loadSettings(input({ MCP_KHAL_CONFIG: path })));
+    expect(e).toBeInstanceOf(InvalidInput);
+    expect(e.message).toMatch(message);
   });
 
   it("fails on a corrupt config instead of starting with guesses", async () => {

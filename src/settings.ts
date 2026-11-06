@@ -12,6 +12,10 @@ export interface Settings {
   /** where `khal` came from: the environment overrides the config file */
   readonly khalSource: "MCP_KHAL_BIN" | "config";
   readonly calendarEmails: Mapping;
+  /** reminder for new events without an explicit `alarm`: `15m`, `2h`, `1d` or `none` */
+  readonly defaultAlarm: string;
+  /** calendar name -> reminder that overrides `defaultAlarm` for that calendar */
+  readonly calendarAlarms: Mapping;
   readonly configPath: string;
   /** the full environment handed to khal */
   readonly childEnv: Env;
@@ -41,6 +45,8 @@ export const buildSettings = (input: {
     khal: binary,
     khalSource: source,
     calendarEmails: input.config.calendarEmails,
+    defaultAlarm: input.config.defaultAlarm,
+    calendarAlarms: input.config.calendarAlarms,
     configPath: input.configPath,
     childEnv: { ...input.env, LC_ALL: "C.UTF-8" },
     tmpDir: input.tmpDir,

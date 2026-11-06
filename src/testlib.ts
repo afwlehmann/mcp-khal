@@ -56,6 +56,8 @@ export const testSettings = (overrides: Partial<Settings> = {}): Settings => ({
   khal: "khal",
   khalSource: "config",
   calendarEmails: {},
+  defaultAlarm: "none",
+  calendarAlarms: {},
   configPath: join(tmpdir(), "mcp-khal-tests-no-such-dir", "mcp-khal.json"),
   childEnv: { PATH: process.env.PATH },
   tmpDir: tmpdir(),
