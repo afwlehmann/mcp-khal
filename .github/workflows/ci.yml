@@ -32,6 +32,10 @@ jobs:
         run: nix flake check --print-build-logs
       - name: Build the package
         run: nix build .#default --print-build-logs
+      - name: Integration tests (real khal from the dev shell, temporary directories only)
+        run: |
+          nix develop --command npm ci --ignore-scripts
+          nix develop --command npm run test:integration
       - name: Smoke test the built binary
         run: |
           rc=0

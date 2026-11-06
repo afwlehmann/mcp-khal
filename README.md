@@ -138,6 +138,9 @@ After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set 
 ### Development
 `nix develop` installs git hooks: `nixfmt`, `biome` (lint + format for TypeScript), `ripsecrets`, the unit tests (`npm test`: typecheck + [vitest](https://vitest.dev) with enforced coverage thresholds), and `convco` (Conventional Commits, e.g. `feat: add x`, `fix: y`). A commit fails if any of them fail. `nix build` also runs the tests.
 
+### Integration tests
+`nix develop --command npm run test:integration` runs the tools against the real khal from the dev shell: it creates events, a weekly series and an invite, and reads them back through khal, checks the ICS files khal stored, and runs `mcp-khal setup`. Everything happens inside one temporary directory (HOME, the XDG directories, `TMPDIR`, khal's config and calendars, the mcp-khal config); khal gets an environment built from scratch with only `PATH` taken over, so your real calendars and configuration are never read or written. The directory is removed afterwards, and the run fails if it is not.
+
 ### CI and releases
 `.github/workflows/ci.yml` runs on pushes to `main`, tags and pull requests:
 
