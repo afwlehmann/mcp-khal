@@ -20,6 +20,15 @@ let
     check = x: lib.isString x && builtins.match emailRegex x != null;
     merge = lib.mergeEqualOption;
   };
+
+  # same rule as `isAlarmSetting` in src/config.ts: 30m, 2h, 1d, or none
+  alarmSetting = lib.mkOptionType {
+    name = "reminder";
+    description = "reminder like 30m, 2h or 1d (minutes, hours, days before the start), or none";
+    descriptionClass = "noun";
+    check = x: lib.isString x && builtins.match "none|[0-9]{1,4}[mhd]" x != null;
+    merge = lib.mergeEqualOption;
+  };
 in
 {
   options.programs.mcp-khal = {
@@ -53,6 +62,30 @@ in
         organizer of invites; replaces the interactive `mcp-khal setup`.
       '';
     };
+
+    defaultAlarm = lib.mkOption {
+      type = alarmSetting;
+      default = "none";
+      example = "15m";
+      description = ''
+        Reminder for new events that do not name one and whose calendar has no entry in
+        `calendarAlarms`: `30m`, `2h` or `1d` (minutes, hours or days before the start), or
+        `none` for no reminder.
+      '';
+    };
+
+    calendarAlarms = lib.mkOption {
+      type = lib.types.attrsOf alarmSetting;
+      default = { };
+      example = {
+        work = "1d";
+        private = "none";
+      };
+      description = ''
+        Calendar name -> reminder for new events on that calendar; overrides `defaultAlarm`.
+        Use `none` to have no reminder on a calendar.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -61,7 +94,7 @@ in
     xdg.configFile."mcp-khal.json".text =
       builtins.toJSON {
         khal = "${lib.getBin cfg.khalPackage}/bin/khal";
-        inherit (cfg) calendarEmails;
+        inherit (cfg) calendarEmails defaultAlarm calendarAlarms;
       }
       + "\n";
   };
