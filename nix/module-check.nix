@@ -24,7 +24,7 @@ let
     };
 
   evaluateWith =
-    extra: emails:
+    extra:
     (lib.evalModules {
       modules = [
         stub
@@ -33,7 +33,6 @@ let
           programs.mcp-khal = {
             enable = true;
             package = pkgs.hello; # stand-in for the server; evaluated, never built
-            calendarEmails = emails;
           }
           // extra;
         }
@@ -42,12 +41,38 @@ let
 
   evaluate = evaluateWith { };
 
-  accepted = {
-    work = "me@example.com";
-    private = "first.last+tag@sub.example.org";
+  # forces only the option under test; the stand-in package must not be evaluated deeply
+  throws = value: !(builtins.tryEval (builtins.deepSeq value true)).success;
+  calendarsOf = extra: (evaluateWith extra).programs.mcp-khal.calendars;
+
+  khalOf = khal: "${khal}/bin/khal";
+  configOf = config: config.xdg.configFile."mcp-khal.json".text;
+  expectedWith =
+    {
+      khal ? khalOf pkgs.khal,
+      defaultAlarm ? "none",
+      calendars ? { },
+    }:
+    builtins.toJSON { inherit khal defaultAlarm calendars; } + "\n";
+
+  # one object per calendar; every field is optional and an unset one stays out of the JSON
+  acceptedCalendars = {
+    work = {
+      email = "me@example.com";
+      alarm = "1d";
+    };
+    private = {
+      email = "first.last+tag@sub.example.org";
+      alarm = "none";
+    };
+    school.alarm = "90m";
+    early.alarm = "0m";
+    long.alarm = "2h";
+    emailOnly.email = "x@y.org";
+    declared = { };
   };
 
-  rejected = [
+  rejectedEmails = [
     ""
     "nope"
     "me@example"
@@ -55,23 +80,6 @@ let
     "a@b.com, c@d.com"
     "<me@example.com>"
   ];
-
-  isRejected =
-    value:
-    !(builtins.tryEval (
-      builtins.deepSeq (evaluate { work = value; }).programs.mcp-khal.calendarEmails true
-    )).success;
-
-  acceptedAlarms = {
-    defaultAlarm = "15m";
-    calendarAlarms = {
-      work = "1d";
-      home = "none";
-      school = "90m";
-      early = "0m";
-      long = "2h";
-    };
-  };
 
   rejectedAlarms = [
     ""
@@ -88,50 +96,49 @@ let
     "PT5M"
     "soon"
   ];
-
-  # forces only the option under test; the stand-in package must not be evaluated deeply
-  throws = value: !(builtins.tryEval (builtins.deepSeq value true)).success;
-  rejectsDefault = v: throws (evaluateWith { defaultAlarm = v; } { }).programs.mcp-khal.defaultAlarm;
-  rejectsCalendar =
-    v: throws (evaluateWith { calendarAlarms.work = v; } { }).programs.mcp-khal.calendarAlarms;
-
-  configOf = config: config.xdg.configFile."mcp-khal.json".text;
-  expectedWith =
-    extra: khal: emails:
-    builtins.toJSON (
-      {
-        inherit khal;
-        calendarEmails = emails;
-        defaultAlarm = "none";
-        calendarAlarms = { };
-      }
-      // extra
-    )
-    + "\n";
-  expected = expectedWith { };
 in
 
+assert lib.assertMsg
+  (
+    configOf (evaluateWith {
+      defaultAlarm = "15m";
+      calendars = acceptedCalendars;
+    }) == expectedWith {
+      defaultAlarm = "15m";
+      calendars = acceptedCalendars;
+    }
+  )
+  "per-calendar settings (address and reminder in m, h, d, 0m and none) must be written to mcp-khal.json";
 assert lib.assertMsg (
-  configOf (evaluate accepted) == expected "${pkgs.khal}/bin/khal" accepted
-) "valid addresses must be written to mcp-khal.json together with the khal path";
-assert lib.assertMsg (lib.all isRejected rejected) "invalid addresses must be rejected";
+  configOf evaluate == expectedWith { }
+) "khalPackage must default to nixpkgs' khal and the file is written even without calendars";
 assert lib.assertMsg (
-  configOf (evaluate { }) == expected "${pkgs.khal}/bin/khal" { }
-) "khalPackage must default to nixpkgs' khal and the file is written even without addresses";
-assert lib.assertMsg (
-  configOf (evaluateWith { khalPackage = pkgs.hello; } accepted)
-  == expected "${pkgs.hello}/bin/khal" accepted
+  configOf (evaluateWith {
+    khalPackage = pkgs.hello;
+  }) == expectedWith { khal = khalOf pkgs.hello; }
 ) "a custom khalPackage must be the khal written to the config";
-assert lib.assertMsg (lib.elem pkgs.hello
-  (evaluate { }).home.packages
-) "the configured package must be installed";
-assert lib.assertMsg (
-  configOf (evaluateWith acceptedAlarms { })
-  == expectedWith acceptedAlarms "${pkgs.khal}/bin/khal" { }
-) "default and per-calendar reminders (m, h, d, 0m and none) must be written to the config";
-assert lib.assertMsg (lib.all rejectsDefault rejectedAlarms)
-  "invalid default reminders must be rejected";
-assert lib.assertMsg (lib.all rejectsCalendar rejectedAlarms)
-  "invalid per-calendar reminders must be rejected";
+assert lib.assertMsg (lib.elem pkgs.hello evaluate.home.packages)
+  "the configured package must be installed";
+assert lib.assertMsg (lib.all (
+  v:
+  throws (calendarsOf {
+    calendars.work.email = v;
+  })
+) rejectedEmails) "invalid addresses must be rejected";
+assert lib.assertMsg (lib.all (
+  v:
+  throws (calendarsOf {
+    calendars.work.alarm = v;
+  })
+) rejectedAlarms) "invalid per-calendar reminders must be rejected";
+assert lib.assertMsg (lib.all (
+  v: throws (evaluateWith { defaultAlarm = v; }).programs.mcp-khal.defaultAlarm
+) rejectedAlarms) "invalid default reminders must be rejected";
+assert lib.assertMsg (throws (calendarsOf {
+  calendars.work.emial = "me@example.com";
+})) "a typo in a calendar option must be an evaluation error, not silently ignored";
+assert lib.assertMsg (throws (calendarsOf {
+  calendars.work = "me@example.com";
+})) "a calendar must be an object, not a plain address";
 
 pkgs.runCommand "mcp-khal-hm-module-check" { } "touch $out"

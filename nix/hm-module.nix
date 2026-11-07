@@ -29,6 +29,27 @@ let
     check = x: lib.isString x && builtins.match "none|[0-9]{1,4}[mhd]" x != null;
     merge = lib.mergeEqualOption;
   };
+
+  # one statically typed object per calendar; options that are not set stay out of the JSON
+  calendarModule = lib.types.submodule {
+    options = {
+      email = lib.mkOption {
+        type = lib.types.nullOr emailAddress;
+        default = null;
+        example = "me@example.com";
+        description = "Your address on this calendar: the organizer of invites created there.";
+      };
+      alarm = lib.mkOption {
+        type = lib.types.nullOr alarmSetting;
+        default = null;
+        example = "1d";
+        description = ''
+          Reminder for new events on this calendar (`30m`, `2h`, `1d` or `none`); overrides
+          `defaultAlarm`. Unset means `defaultAlarm` applies.
+        '';
+      };
+    };
+  };
 in
 {
   options.programs.mcp-khal = {
@@ -51,39 +72,36 @@ in
       '';
     };
 
-    calendarEmails = lib.mkOption {
-      type = lib.types.attrsOf emailAddress;
-      default = { };
-      example = {
-        work = "me@example.com";
-      };
-      description = ''
-        Calendar name -> your email address on that calendar. Used as the
-        organizer of invites; replaces the interactive `mcp-khal setup`.
-      '';
-    };
-
     defaultAlarm = lib.mkOption {
       type = alarmSetting;
       default = "none";
       example = "15m";
       description = ''
-        Reminder for new events that do not name one and whose calendar has no entry in
-        `calendarAlarms`: `30m`, `2h` or `1d` (minutes, hours or days before the start), or
-        `none` for no reminder.
+        Reminder for new events that do not name one and whose calendar has no `alarm` of its
+        own (this includes events without a calendar): `30m`, `2h` or `1d` (minutes, hours or
+        days before the start), or `none` for no reminder.
       '';
     };
 
-    calendarAlarms = lib.mkOption {
-      type = lib.types.attrsOf alarmSetting;
+    calendars = lib.mkOption {
+      type = lib.types.attrsOf calendarModule;
       default = { };
       example = {
-        work = "1d";
-        private = "none";
+        work = {
+          email = "me@example.com";
+          alarm = "1d";
+        };
+        private = {
+          email = "me@example.org";
+          alarm = "none";
+        };
+        school.alarm = "90m";
       };
       description = ''
-        Calendar name -> reminder for new events on that calendar; overrides `defaultAlarm`.
-        Use `none` to have no reminder on a calendar.
+        Per-calendar settings, by the name khal reports (`khal printcalendars`): your address on
+        the calendar (the organizer of invites; replaces the interactive `mcp-khal setup`) and
+        the reminder for new events there. A name that khal does not know stops the server at
+        startup.
       '';
     };
   };
@@ -94,7 +112,8 @@ in
     xdg.configFile."mcp-khal.json".text =
       builtins.toJSON {
         khal = "${lib.getBin cfg.khalPackage}/bin/khal";
-        inherit (cfg) calendarEmails defaultAlarm calendarAlarms;
+        inherit (cfg) defaultAlarm;
+        calendars = lib.mapAttrs (_: calendar: lib.filterAttrs (_: v: v != null) calendar) cfg.calendars;
       }
       + "\n";
   };
