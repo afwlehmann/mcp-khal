@@ -44,8 +44,8 @@ let
         default = null;
         example = "1d";
         description = ''
-          Reminder for new events on this calendar (`30m`, `2h`, `1d` or `none`); overrides
-          `defaultAlarm`. Unset means `defaultAlarm` applies.
+          Reminder for new events on this calendar (`30m`, `2h`, `1d` or `none`). Unset means
+          no reminder. An alarm given with the event overrides it.
         '';
       };
     };
@@ -72,14 +72,14 @@ in
       '';
     };
 
-    defaultAlarm = lib.mkOption {
-      type = alarmSetting;
-      default = "none";
-      example = "15m";
+    defaultCalendar = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "[^[:cntrl:]]*[^[:space:]][^[:cntrl:]]*");
+      default = null;
+      example = "work";
       description = ''
-        Reminder for new events that do not name one and whose calendar has no `alarm` of its
-        own (this includes events without a calendar): `30m`, `2h` or `1d` (minutes, hours or
-        days before the start), or `none` for no reminder.
+        The calendar new events go to when a call names none, by the name khal reports. Required
+        when khal has several calendars; with a single calendar that one is used. The server
+        checks at startup that khal has it, and never relies on khal's own `default_calendar`.
       '';
     };
 
@@ -110,11 +110,13 @@ in
     home.packages = [ cfg.package ];
 
     xdg.configFile."mcp-khal.json".text =
-      builtins.toJSON {
-        khal = "${lib.getBin cfg.khalPackage}/bin/khal";
-        inherit (cfg) defaultAlarm;
-        calendars = lib.mapAttrs (_: calendar: lib.filterAttrs (_: v: v != null) calendar) cfg.calendars;
-      }
+      builtins.toJSON (
+        {
+          khal = "${lib.getBin cfg.khalPackage}/bin/khal";
+          calendars = lib.mapAttrs (_: calendar: lib.filterAttrs (_: v: v != null) calendar) cfg.calendars;
+        }
+        // lib.optionalAttrs (cfg.defaultCalendar != null) { inherit (cfg) defaultCalendar; }
+      )
       + "\n";
   };
 }

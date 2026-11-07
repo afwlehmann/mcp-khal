@@ -50,10 +50,19 @@ let
   expectedWith =
     {
       khal ? khalOf pkgs.khal,
-      defaultAlarm ? "none",
+      defaultCalendar ? null,
       calendars ? { },
     }:
-    builtins.toJSON { inherit khal defaultAlarm calendars; } + "\n";
+    builtins.toJSON (
+      {
+        inherit khal;
+      }
+      // lib.optionalAttrs (defaultCalendar != null) { inherit defaultCalendar; }
+      // {
+        inherit calendars;
+      }
+    )
+    + "\n";
 
   # one object per calendar; every field is optional and an unset one stays out of the JSON
   acceptedCalendars = {
@@ -81,6 +90,12 @@ let
     "<me@example.com>"
   ];
 
+  rejectedCalendarNames = [
+    ""
+    "   "
+    "a\nb"
+  ];
+
   rejectedAlarms = [
     ""
     "15"
@@ -101,10 +116,10 @@ in
 assert lib.assertMsg
   (
     configOf (evaluateWith {
-      defaultAlarm = "15m";
+      defaultCalendar = "work";
       calendars = acceptedCalendars;
     }) == expectedWith {
-      defaultAlarm = "15m";
+      defaultCalendar = "work";
       calendars = acceptedCalendars;
     }
   )
@@ -132,8 +147,13 @@ assert lib.assertMsg (lib.all (
   })
 ) rejectedAlarms) "invalid per-calendar reminders must be rejected";
 assert lib.assertMsg (lib.all (
-  v: throws (evaluateWith { defaultAlarm = v; }).programs.mcp-khal.defaultAlarm
-) rejectedAlarms) "invalid default reminders must be rejected";
+  v: throws (evaluateWith { defaultCalendar = v; }).programs.mcp-khal.defaultCalendar
+) rejectedCalendarNames) "invalid default calendar names must be rejected";
+assert lib.assertMsg (
+  !(builtins.hasAttr "defaultCalendar" (
+    builtins.fromJSON (builtins.unsafeDiscardStringContext (configOf evaluate))
+  ))
+) "an unset defaultCalendar must stay out of mcp-khal.json";
 assert lib.assertMsg (throws (calendarsOf {
   calendars.work.emial = "me@example.com";
 })) "a typo in a calendar option must be an evaluation error, not silently ignored";
