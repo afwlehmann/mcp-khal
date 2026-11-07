@@ -35,7 +35,7 @@ describe("preflight", () => {
     await runOk(
       preflight(
         settings({
-          calendarEmails: { work: "me@work.com" },
+          calendars: { work: { email: "me@work.com" } },
           calendarAlarms: { home: "none", work: "1d" },
         }),
       ),
@@ -61,12 +61,16 @@ describe("preflight", () => {
     expect(e.message).toBe("MCP_KHAL_CONFIG points to /x/cfg.json, which does not exist");
   });
 
-  it("names the calendars that khal does not know, from both maps, and lists what khal has", async () => {
+  it("names the calendars that khal does not know, whatever they configure, and lists what khal has", async () => {
     const e = await runFail(
       preflight(
         settings({
-          calendarEmails: { work: "me@work.com", wrok: "me@work.com" },
-          calendarAlarms: { home: "1d", hmoe: "none" },
+          calendars: {
+            work: { email: "me@work.com" },
+            wrok: { email: "me@work.com" },
+            home: { alarm: "1d" },
+            hmoe: { alarm: "none" },
+          },
         }),
       ),
     );
@@ -80,7 +84,7 @@ describe("preflight", () => {
     const empty = await fakeKhal({ stdout: "" });
     try {
       const e = await runFail(
-        preflight(empty.settings({ tmpDir: dir, calendarEmails: { work: "me@work.com" } })),
+        preflight(empty.settings({ tmpDir: dir, calendars: { work: { email: "me@work.com" } } })),
       );
       expect(e.message).toMatch(/khal does not know: work \(khal has: none\)/);
     } finally {
@@ -94,7 +98,7 @@ describe("preflight", () => {
         settings({
           khal: "/does/not/exist/khal",
           khalSource: "MCP_KHAL_BIN",
-          calendarEmails: { x: "a@b.co" },
+          calendars: { x: { email: "a@b.co" } },
         }),
       ),
     );

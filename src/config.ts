@@ -12,9 +12,6 @@ import {
   valid,
 } from "./validation.js";
 
-/** calendar name -> the user's own address on that calendar */
-export type Mapping = Readonly<Record<string, string>>;
-
 export type Env = Readonly<Record<string, string | undefined>>;
 
 /** `15m`, `2h`, `1d`, or `none` for no reminder at all */
@@ -22,22 +19,30 @@ export type AlarmSetting = string;
 
 export const NO_ALARM = "none";
 
+/** Everything that can be configured for one calendar; every field is optional. */
+export interface CalendarConfig {
+  /** the user's own address on this calendar: the organizer of invites */
+  readonly email?: string;
+  /** reminder for new events on this calendar; overrides `Config.defaultAlarm` */
+  readonly alarm?: AlarmSetting;
+}
+
+/** calendar name (as khal reports it) -> its settings */
+export type Calendars = Readonly<Record<string, CalendarConfig>>;
+
 export interface Config {
   /** the khal executable: a name looked up on PATH or an absolute path */
   readonly khal: string;
-  readonly calendarEmails: Mapping;
   /** reminder for events without an explicit `alarm`, unless the calendar has its own */
   readonly defaultAlarm: AlarmSetting;
-  /** calendar name -> reminder for new events on that calendar (overrides `defaultAlarm`) */
-  readonly calendarAlarms: Mapping;
+  readonly calendars: Calendars;
 }
 
 export const DEFAULT_KHAL = "khal";
 export const defaultConfig: Config = {
   khal: DEFAULT_KHAL,
-  calendarEmails: {},
   defaultAlarm: NO_ALARM,
-  calendarAlarms: {},
+  calendars: {},
 };
 
 // ---------- pure ----------
@@ -115,7 +120,10 @@ export const resolveKhalBinary = (
     : { binary: config.khal, source: "config" };
 };
 
-/** `MCP_KHAL_BIN`, when set, must be a valid executable name too. */
+/**
+ * `MCP_KHAL_BIN`, when set, follows the same rule as the config's `khal`: a bare command name
+ * or an absolute path, never a relative path.
+ */
 export const checkEnvBinary = (env: Env): Validated<string | undefined> => {
   const fromEnv = envValue(env, "MCP_KHAL_BIN");
   return fromEnv === undefined ? valid(undefined) : checkBinary(fromEnv, "MCP_KHAL_BIN");
@@ -138,14 +146,53 @@ const checkCalendarName = (name: string, where: string): Validated<string> => {
   return valid(n);
 };
 
-/** A JSON object of calendar name -> value, every entry checked, names trimmed and unique. */
-const parseCalendarMap = (
+const parseEmail = (raw: unknown, where: string): Validated<string> =>
+  typeof raw === "string" && isEmail(raw.trim())
+    ? valid(raw.trim())
+    : problem(`${where} is not a valid email address, got ${JSON.stringify(raw)}`);
+
+const parseAlarm = (raw: unknown, where: string): Validated<AlarmSetting> =>
+  typeof raw === "string" && isAlarmSetting(raw.trim())
+    ? valid(raw.trim())
+    : problem(`${where} must be ${ALARM_HINT}, got ${JSON.stringify(raw)}`);
+
+const CALENDAR_KEYS: readonly string[] = ["email", "alarm"];
+
+/** One calendar's object: only `email` and `alarm` are known, each optional, every problem listed. */
+const parseCalendar = (raw: unknown, name: string): Validated<CalendarConfig> => {
+  const where = `calendars.${name}`;
+  if (!isRecord(raw))
+    return problem(
+      `${where} must be an object like { "email": "me@example.com", "alarm": "15m" }, got ${JSON.stringify(raw)}`,
+    );
+  return Result.map(
+    collect({
+      unknownKeys: collectAll(
+        Object.keys(raw)
+          .filter((k) => !CALENDAR_KEYS.includes(k))
+          .map((k) =>
+            problem(
+              `${where} has an unknown key '${k}' (expected ${CALENDAR_KEYS.map((x) => `'${x}'`).join(", ")})`,
+            ),
+          ),
+      ),
+      email: raw.email === undefined ? valid(undefined) : parseEmail(raw.email, `${where}.email`),
+      alarm: raw.alarm === undefined ? valid(undefined) : parseAlarm(raw.alarm, `${where}.alarm`),
+    }),
+    ({ email, alarm }): CalendarConfig => ({
+      ...(email === undefined ? {} : { email }),
+      ...(alarm === undefined ? {} : { alarm }),
+    }),
+  );
+};
+
+/** A JSON object of calendar name -> settings: every entry checked, names trimmed and unique. */
+const parseCalendars = (
   raw: unknown,
   where: string,
-  kind: string,
-  parseValue: (value: unknown, name: string) => Validated<string>,
-): Validated<Mapping> => {
-  if (!isRecord(raw)) return problem(`${where} must be a JSON object of calendar name -> ${kind}`);
+  parseValue: (value: unknown, name: string) => Validated<CalendarConfig>,
+): Validated<Calendars> => {
+  if (!isRecord(raw)) return problem(`${where} must be a JSON object of calendar name -> settings`);
   const entries = collectAll(
     Object.entries(raw).map(([name, value]) =>
       Result.map(
@@ -162,38 +209,27 @@ const parseCalendarMap = (
           duplicates.map((n) =>
             problem(`${where} lists calendar '${n}' more than once (names are compared after trimming)`),
           ),
-        ).pipe(Result.map(() => ({}) as Mapping))
-      : valid(Object.fromEntries(list) as Mapping);
+        ).pipe(Result.map(() => ({}) as Calendars))
+      : valid(Object.fromEntries(list) as Calendars);
   });
 };
 
-const parseEmails = (raw: unknown, where: string): Validated<Mapping> =>
-  parseCalendarMap(raw, where, "email", (value, name) =>
-    typeof value === "string" && isEmail(value.trim())
-      ? valid(value.trim())
-      : problem(`${where} entry '${name}' is not a valid email address`),
-  );
-
-const parseAlarm = (raw: unknown, where: string): Validated<AlarmSetting> =>
-  typeof raw === "string" && isAlarmSetting(raw.trim())
-    ? valid(raw.trim())
-    : problem(`${where} must be ${ALARM_HINT}, got ${JSON.stringify(raw)}`);
-
-const parseCalendarAlarms = (raw: unknown): Validated<Mapping> =>
-  parseCalendarMap(raw, "calendarAlarms", "reminder", (value, name) =>
-    parseAlarm(value, `calendarAlarms entry '${name}'`),
-  );
+/** v1.0.0 and v1.2.0 keys that moved into `calendars.<name>`; named in the error so users can migrate. */
+const RETIRED_KEYS: Readonly<Record<string, string>> = {
+  calendarEmails: 'moved into "calendars": { "<name>": { "email": "..." } }',
+  calendarAlarms: 'moved into "calendars": { "<name>": { "alarm": "..." } }',
+};
 
 const parseBinary = (raw: unknown): Validated<string> =>
   typeof raw === "string"
     ? checkBinary(raw, "config 'khal'")
     : problem(`config 'khal' must be a string, got ${JSON.stringify(raw)}`);
 
-const CONFIG_KEYS: readonly string[] = ["khal", "calendarEmails", "defaultAlarm", "calendarAlarms"];
+const CONFIG_KEYS: readonly string[] = ["khal", "defaultAlarm", "calendars"];
 
 /**
- * `{ "khal": "khal", "calendarEmails": { "work": "me@example.com" }, "defaultAlarm": "15m",
- *    "calendarAlarms": { "work": "1d" } }`; all keys are optional.
+ * `{ "khal": "khal", "defaultAlarm": "15m",
+ *    "calendars": { "work": { "email": "me@example.com", "alarm": "1d" } } }`; all keys are optional.
  * A flat `{ "work": "me@example.com" }` (the format of v1.0.0) is still understood.
  * Every problem of the file is reported, not only the first.
  */
@@ -208,10 +244,12 @@ export const parseConfigValidated = (json: string): Validated<Config> =>
 
       const legacy = Object.values(raw).every((v) => typeof v === "string" && isEmail(v.trim()));
       if (legacy)
-        return Result.map(parseEmails(raw, "config"), (calendarEmails) => ({
-          ...defaultConfig,
-          calendarEmails,
-        }));
+        return Result.map(
+          parseCalendars(raw, "config", (value, name) =>
+            Result.map(parseEmail(value, `config entry '${name}'`), (email): CalendarConfig => ({ email })),
+          ),
+          (calendars) => ({ ...defaultConfig, calendars }),
+        );
 
       return Result.map(
         collect({
@@ -220,26 +258,21 @@ export const parseConfigValidated = (json: string): Validated<Config> =>
               .filter((k) => !CONFIG_KEYS.includes(k))
               .map((k) =>
                 problem(
-                  `unknown config key '${k}' (expected ${CONFIG_KEYS.map((x) => `'${x}'`).join(", ")})`,
+                  k in RETIRED_KEYS
+                    ? `config key '${k}' has ${RETIRED_KEYS[k]}`
+                    : `unknown config key '${k}' (expected ${CONFIG_KEYS.map((x) => `'${x}'`).join(", ")})`,
                 ),
               ),
           ),
           khal: raw.khal === undefined ? valid(DEFAULT_KHAL) : parseBinary(raw.khal),
-          calendarEmails:
-            raw.calendarEmails === undefined
-              ? valid({} as Mapping)
-              : parseEmails(raw.calendarEmails, "calendarEmails"),
           defaultAlarm:
             raw.defaultAlarm === undefined ? valid(NO_ALARM) : parseAlarm(raw.defaultAlarm, "defaultAlarm"),
-          calendarAlarms:
-            raw.calendarAlarms === undefined ? valid({} as Mapping) : parseCalendarAlarms(raw.calendarAlarms),
+          calendars:
+            raw.calendars === undefined
+              ? valid({} as Calendars)
+              : parseCalendars(raw.calendars, "calendars", parseCalendar),
         }),
-        ({ khal, calendarEmails, defaultAlarm, calendarAlarms }): Config => ({
-          khal,
-          calendarEmails,
-          defaultAlarm,
-          calendarAlarms,
-        }),
+        ({ khal, defaultAlarm, calendars }): Config => ({ khal, defaultAlarm, calendars }),
       );
     },
   );
@@ -248,33 +281,25 @@ export const parseConfig = (json: string): Result.Result<Config, InvalidInput> =
   orInvalidInput(parseConfigValidated(json));
 
 export const serializeConfig = (c: Config): string =>
-  `${JSON.stringify(
-    {
-      khal: c.khal,
-      calendarEmails: c.calendarEmails,
-      defaultAlarm: c.defaultAlarm,
-      calendarAlarms: c.calendarAlarms,
-    },
-    null,
-    2,
-  )}\n`;
+  `${JSON.stringify({ khal: c.khal, defaultAlarm: c.defaultAlarm, calendars: c.calendars }, null, 2)}\n`;
+
+/** The settings of one calendar, by the (trimmed) name; inherited object properties never match. */
+const calendarOf = (calendars: Calendars, calendar: string | undefined): CalendarConfig | undefined => {
+  const name = calendar?.trim();
+  return name !== undefined && Object.hasOwn(calendars, name) ? calendars[name] : undefined;
+};
 
 /**
  * The reminder for a new event: an explicit `alarm` wins, then the calendar's own setting, then
  * the default. `none` (explicit or configured) means no reminder, expressed as `undefined`.
  */
 export const resolveAlarm = (
-  settings: Pick<Config, "defaultAlarm" | "calendarAlarms">,
+  settings: Pick<Config, "defaultAlarm" | "calendars">,
   calendar: string | undefined,
   explicit: string | undefined,
 ): string | undefined => {
-  const name = calendar?.trim();
-  const chosen =
-    explicit?.trim() ??
-    (name !== undefined && Object.hasOwn(settings.calendarAlarms, name)
-      ? settings.calendarAlarms[name]
-      : settings.defaultAlarm);
-  return chosen === undefined || chosen === NO_ALARM ? undefined : chosen;
+  const chosen = explicit?.trim() ?? calendarOf(settings.calendars, calendar)?.alarm ?? settings.defaultAlarm;
+  return chosen === NO_ALARM ? undefined : chosen;
 };
 
 /** Answer to a setup prompt: blank keeps the default (or skips), otherwise must be an email. */
@@ -287,9 +312,9 @@ export const interpretAnswer = (
   return isEmail(a) ? Result.succeed(a) : Result.fail(`'${a}' is not a valid email address`);
 };
 
-/** Which address represents the user on this calendar? Explicit > mapping > email-like name. */
+/** Which address represents the user on this calendar? Explicit > its config > email-like name. */
 export const resolveAddress = (
-  mapping: Mapping,
+  calendars: Calendars,
   calendar: string | undefined,
   explicit?: string,
 ): Result.Result<string, InvalidInput> => {
@@ -300,7 +325,8 @@ export const resolveAddress = (
   const name = calendar?.trim();
   if (name === undefined || name === "")
     return invalid("calendar (or organizer) is required to determine your address for invites");
-  if (Object.hasOwn(mapping, name)) return Result.succeed(mapping[name]!);
+  const configured = calendarOf(calendars, name)?.email;
+  if (configured !== undefined) return Result.succeed(configured);
   return isEmail(name)
     ? Result.succeed(name)
     : invalid(`no address known for calendar '${name}'; run \`mcp-khal setup\` or pass one explicitly`);

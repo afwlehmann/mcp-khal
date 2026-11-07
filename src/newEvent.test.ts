@@ -23,8 +23,12 @@ describe("newEvent reminders", () => {
     await fake.cleanup();
   });
 
-  const settingsWith = (defaultAlarm: string, calendarAlarms: Record<string, string> = {}) =>
-    fake.settings({ defaultAlarm, calendarAlarms });
+  /** `alarms` is calendar name -> that calendar's own reminder */
+  const settingsWith = (defaultAlarm: string, alarms: Record<string, string> = {}) =>
+    fake.settings({
+      defaultAlarm,
+      calendars: Object.fromEntries(Object.entries(alarms).map(([name, alarm]) => [name, { alarm }])),
+    });
 
   /** the `-m` value of the single khal call, or undefined when there is none */
   const alarmArg = async (): Promise<string | undefined> => {
@@ -101,7 +105,7 @@ describe("newEvent reminders", () => {
     it("writes the default reminder for invites too", async () => {
       await runOk(
         newEvent(
-          fake.settings({ defaultAlarm: "30m", calendarEmails: { work: "me@work.com" } }),
+          fake.settings({ defaultAlarm: "30m", calendars: { work: { email: "me@work.com" } } }),
           {
             calendar: "work",
             start: "2030-01-17 10:00",
@@ -140,7 +144,7 @@ describe("newEvent", () => {
 
   beforeEach(async () => {
     fake = await fakeKhal({ stdout: "done\n" });
-    settings = fake.settings({ calendarEmails: { work: "me@work.com" } });
+    settings = fake.settings({ calendars: { work: { email: "me@work.com" } } });
   });
 
   afterEach(async () => {
@@ -233,7 +237,7 @@ describe("newEvent", () => {
   });
 
   it("does not consult anything but the settings for the organizer", async () => {
-    const bare = fake.settings({ calendarEmails: {} });
+    const bare = fake.settings({ calendars: {} });
     const e = await runFail(
       newEvent(
         bare,

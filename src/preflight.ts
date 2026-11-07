@@ -19,10 +19,7 @@ const attempt = <A>(
 
 const checkCalendars = (settings: Settings, known: string): Validated<void> => {
   const names = parseCalendarNames(known);
-  const configured = [
-    ...new Set([...Object.keys(settings.calendarEmails), ...Object.keys(settings.calendarAlarms)]),
-  ];
-  const unknown = unknownCalendars(configured, names);
+  const unknown = unknownCalendars(Object.keys(settings.calendars), names);
   return unknown.length === 0
     ? valid(undefined)
     : problem(

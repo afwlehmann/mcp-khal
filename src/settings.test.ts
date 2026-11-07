@@ -9,9 +9,8 @@ import { removeDir, runFail, runOk, tempDir } from "./testlib.js";
 describe("buildSettings", () => {
   const config = {
     khal: "/cfg/khal",
-    calendarEmails: { work: "me@work.com" },
     defaultAlarm: "none",
-    calendarAlarms: {},
+    calendars: { work: { email: "me@work.com" } },
   };
   const build = (env: Record<string, string | undefined>) =>
     buildSettings({ env, config, configPath: "/c.json", tmpDir: "/tmp/x" });
@@ -21,26 +20,23 @@ describe("buildSettings", () => {
     expect(s).toMatchObject({
       khal: "/cfg/khal",
       khalSource: "config",
-      calendarEmails: { work: "me@work.com" },
+      calendars: { work: { email: "me@work.com" } },
       configPath: "/c.json",
       tmpDir: "/tmp/x",
       timeoutMs: DEFAULT_TIMEOUT_MS,
     });
   });
 
-  it("carries the configured reminders into the settings", () => {
+  it("carries the default reminder and the per-calendar settings into the settings", () => {
+    const calendars = { work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } };
     const s = buildSettings({
       env: {},
-      config: {
-        ...config,
-        defaultAlarm: "15m",
-        calendarAlarms: { work: "1d", home: "none" },
-      },
+      config: { ...config, defaultAlarm: "15m", calendars },
       configPath: "/c.json",
       tmpDir: "/tmp/x",
     });
     expect(s.defaultAlarm).toBe("15m");
-    expect(s.calendarAlarms).toEqual({ work: "1d", home: "none" });
+    expect(s.calendars).toEqual(calendars);
   });
 
   it("lets MCP_KHAL_BIN override the config", () => {
@@ -79,13 +75,16 @@ describe("loadSettings", () => {
       path,
       serializeConfig({
         khal: "/cfg/khal",
-        calendarEmails: { work: "me@work.com" },
         defaultAlarm: "none",
-        calendarAlarms: {},
+        calendars: { work: { email: "me@work.com" } },
       }),
     );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
-    expect(s).toMatchObject({ khal: "/cfg/khal", calendarEmails: { work: "me@work.com" }, configPath: path });
+    expect(s).toMatchObject({
+      khal: "/cfg/khal",
+      calendars: { work: { email: "me@work.com" } },
+      configPath: path,
+    });
   });
 
   it("falls back to XDG_CONFIG_HOME and then ~/.config", async () => {
@@ -97,34 +96,35 @@ describe("loadSettings", () => {
 
   it("uses the defaults when there is no config file", async () => {
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: join(dir, "missing.json") })));
-    expect(s).toMatchObject({ khal: "khal", khalSource: "config", calendarEmails: {} });
+    expect(s).toMatchObject({ khal: "khal", khalSource: "config", calendars: {} });
   });
 
   it("applies MCP_KHAL_BIN on top of the file", async () => {
     const path = join(dir, "cfg2.json");
-    await writeFile(
-      path,
-      serializeConfig({ khal: "/cfg/khal", calendarEmails: {}, defaultAlarm: "none", calendarAlarms: {} }),
-    );
+    await writeFile(path, serializeConfig({ khal: "/cfg/khal", defaultAlarm: "none", calendars: {} }));
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "/env/khal" })));
     expect(s).toMatchObject({ khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
   });
 
-  it("reads default and per-calendar reminders from the file", async () => {
+  it("reads the default reminder and the per-calendar settings from the file", async () => {
     const path = join(dir, "alarms.json");
-    await writeFile(path, '{"defaultAlarm":"15m","calendarAlarms":{"work":"1d","home":"none"}}');
+    await writeFile(
+      path,
+      '{"defaultAlarm":"15m","calendars":{"work":{"email":"me@work.com","alarm":"1d"},"home":{"alarm":"none"}}}',
+    );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
     expect(s.defaultAlarm).toBe("15m");
-    expect(s.calendarAlarms).toEqual({ work: "1d", home: "none" });
+    expect(s.calendars).toEqual({ work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } });
   });
 
   it.each([
     ['{"defaultAlarm":"15"}', /defaultAlarm must be a reminder like 30m, 2h or 1d/],
     ['{"defaultAlarm":"1w"}', /defaultAlarm must be/],
     ['{"defaultAlarm":15}', /defaultAlarm must be/],
-    ['{"calendarAlarms":{"work":"soon"}}', /calendarAlarms entry 'work' must be/],
-    ['{"calendarAlarms":{"work":"1d","home":"-5m"}}', /calendarAlarms entry 'home' must be/],
-    ['{"calendarAlarms":"15m"}', /calendarAlarms must be a JSON object/],
+    ['{"calendars":{"work":{"alarm":"soon"}}}', /calendars\.work\.alarm must be/],
+    ['{"calendars":{"work":{"alarm":"1d"},"home":{"alarm":"-5m"}}}', /calendars\.home\.alarm must be/],
+    ['{"calendars":"15m"}', /calendars must be a JSON object/],
+    ['{"calendars":{"work":"15m"}}', /calendars\.work must be an object/],
   ])("refuses to start with an invalid reminder in the config: %s", async (content, message) => {
     const path = join(dir, "bad-alarm.json");
     await writeFile(path, content);
@@ -171,6 +171,26 @@ describe("loadSettings", () => {
     const e = await runFail(loadSettings(input(env)));
     expect(e).toBeInstanceOf(InvalidInput);
     expect(e.message).toMatch(message);
+  });
+
+  it.each(["khal", "khal-2"])("allows MCP_KHAL_BIN to be a bare command name: %j", async (value) => {
+    const s = await runOk(loadSettings(input({ MCP_KHAL_BIN: value })));
+    expect(s).toMatchObject({ khal: value, khalSource: "MCP_KHAL_BIN" });
+  });
+
+  it.each(["./khal", "bin/khal", "../khal", "my khal"])(
+    "never allows MCP_KHAL_BIN to be a relative path: %j",
+    async (value) => {
+      const e = await runFail(loadSettings(input({ MCP_KHAL_BIN: value })));
+      expect(e.message).toBe(
+        `MCP_KHAL_BIN must be a bare command name (looked up on PATH) or an absolute path, got ${JSON.stringify(value)}`,
+      );
+    },
+  );
+
+  it("accepts an absolute MCP_KHAL_BIN, also with spaces in the path", async () => {
+    const s = await runOk(loadSettings(input({ MCP_KHAL_BIN: "/opt/My Tools/khal" })));
+    expect(s).toMatchObject({ khal: "/opt/My Tools/khal", khalSource: "MCP_KHAL_BIN" });
   });
 
   it("refuses a relative temporary directory", async () => {

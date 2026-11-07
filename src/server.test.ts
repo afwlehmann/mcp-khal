@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Calendars } from "./config.js";
 import { createServer } from "./server.js";
 import { type FakeKhal, fakeKhal, unfold } from "./testlib.js";
 
@@ -8,8 +9,8 @@ const textOf = (r: unknown): string =>
   ((r as { content: { text?: string }[] }).content ?? []).map((c) => c.text ?? "").join("");
 const isError = (r: unknown): boolean => (r as { isError?: boolean }).isError === true;
 
-const connect = async (fake: FakeKhal, emails: Record<string, string> = {}): Promise<Client> => {
-  const server = createServer(fake.settings({ calendarEmails: emails }), {
+const connect = async (fake: FakeKhal, calendars: Calendars = {}): Promise<Client> => {
+  const server = createServer(fake.settings({ calendars }), {
     uid: () => "fixed-uid",
     now: () => new Date("2026-11-02T10:00:00Z"),
   });
@@ -25,7 +26,7 @@ describe("MCP server (in process)", () => {
 
   beforeAll(async () => {
     fake = await fakeKhal({ stdout: "work|2026-11-01|10:00|2026-11-01|11:00|Lunch|Cafe|notes\n" });
-    client = await connect(fake, { work: "me@work.com" });
+    client = await connect(fake, { work: { email: "me@work.com" } });
   });
   afterAll(async () => {
     await client.close();

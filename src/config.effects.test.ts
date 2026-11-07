@@ -21,9 +21,8 @@ describe("config files", () => {
     const path = join(dir, "nested", "deeper", "cfg.json");
     const c = {
       khal: "/opt/khal/bin/khal",
-      calendarEmails: { work: "me@work.com", home: "me@home.org" },
       defaultAlarm: "none",
-      calendarAlarms: {},
+      calendars: { work: { email: "me@work.com" }, home: { email: "me@home.org" } },
     };
     await runOk(saveConfig(path, c));
     expect(await readFile(path, "utf8")).toBe(serializeConfig(c));
@@ -35,9 +34,8 @@ describe("config files", () => {
     await writeFile(path, '{"work":"me@work.com"}');
     expect(await runOk(loadConfig(path))).toEqual({
       khal: "khal",
-      calendarEmails: { work: "me@work.com" },
       defaultAlarm: "none",
-      calendarAlarms: {},
+      calendars: { work: { email: "me@work.com" } },
     });
   });
 

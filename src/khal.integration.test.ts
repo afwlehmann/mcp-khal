@@ -102,10 +102,9 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       join(root, "config", "mcp-khal.json"),
       serializeConfig({
         khal: "khal",
-        calendarEmails: { work: "me@work.com" },
         // work has its own reminder, home explicitly none, the default applies to everything else
         defaultAlarm: "1d",
-        calendarAlarms: { work: "30m", home: "none" },
+        calendars: { work: { email: "me@work.com", alarm: "30m" }, home: { alarm: "none" } },
       }),
     );
 
@@ -385,9 +384,7 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
     });
 
     it("catch a calendar name that khal does not have, and list the ones it has", async () => {
-      const e = await runFail(
-        preflight({ ...settings, calendarEmails: { ...settings.calendarEmails, wrok: "me@work.com" } }),
-      );
+      const e = await runFail(preflight({ ...settings, calendars: { wrok: { email: "me@work.com" } } }));
       expect(e.message).toMatch(
         /^the config names calendars that khal does not know: wrok \(khal has: (home, work|work, home)\)$/,
       );
@@ -451,9 +448,8 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(asked).toHaveLength(2);
       expect(await runOk(loadConfig(setupConfig))).toEqual({
         khal: "khal",
-        calendarEmails: { home: "me@home.org", work: "me@work.com" },
         defaultAlarm: "none",
-        calendarAlarms: {},
+        calendars: { home: { email: "me@home.org" }, work: { email: "me@work.com" } },
       });
     });
   });

@@ -1,10 +1,11 @@
 import type { Interface } from "node:readline/promises";
 import { Effect, Result } from "effect";
 import {
+  type CalendarConfig,
+  type Calendars,
   interpretAnswer,
   isEmail,
   loadConfig,
-  type Mapping,
   parseCalendarNames,
   saveConfig,
 } from "./config.js";
@@ -51,20 +52,26 @@ export const promptFor = (
   return loop;
 };
 
-/** Steps through the calendars, prefilling each prompt from the accumulated mapping. */
+/**
+ * Steps through the calendars, prefilling each prompt with the calendar's configured address.
+ * Only the address is asked for and changed; everything else configured for a calendar (its
+ * reminder) and every calendar khal no longer has stay as they are.
+ */
 export const configure = (
   rl: Interface,
   names: readonly string[],
-  existing: Mapping,
-): Effect.Effect<Mapping, KhalError> =>
+  existing: Calendars,
+): Effect.Effect<Calendars, KhalError> =>
   Effect.reduce(
     names,
-    (): Mapping => existing,
-    (acc, name) =>
-      Effect.map(
-        promptFor(rl, name, acc[name]),
-        (addr): Mapping => (addr === undefined ? acc : { ...acc, [name]: addr }),
-      ),
+    (): Calendars => existing,
+    (acc, name) => {
+      const current: CalendarConfig | undefined = Object.hasOwn(acc, name) ? acc[name] : undefined;
+      return Effect.map(
+        promptFor(rl, name, current?.email),
+        (email): Calendars => (email === undefined ? acc : { ...acc, [name]: { ...current, email } }),
+      );
+    },
   );
 
 /** The terminal setup talks to; supplied by the edge (cli.ts) and replaceable in tests. */
@@ -86,14 +93,14 @@ export const setup = (settings: Settings, io: SetupIo): Effect.Effect<void, Khal
     const existing = yield* loadConfig(settings.configPath);
 
     io.log(`Configuring ${names.length} calendar(s). Config: ${settings.configPath}\n`);
-    const mapping = yield* Effect.acquireUseRelease(
+    const calendars = yield* Effect.acquireUseRelease(
       Effect.sync(io.openPrompt),
-      (rl) => configure(rl, names, existing.calendarEmails),
+      (rl) => configure(rl, names, existing.calendars),
       (rl) => Effect.sync(() => rl.close()),
     );
 
-    yield* saveConfig(settings.configPath, { ...existing, calendarEmails: mapping });
-    io.log(`\nSaved ${Object.keys(mapping).length} mapping(s) to ${settings.configPath}`);
+    yield* saveConfig(settings.configPath, { ...existing, calendars });
+    io.log(`\nSaved ${Object.keys(calendars).length} calendar(s) to ${settings.configPath}`);
   });
 
 /** Loads the settings, runs setup and returns a process exit code. */

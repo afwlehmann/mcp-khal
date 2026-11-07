@@ -98,9 +98,8 @@ describe("setup", () => {
       path,
       serializeConfig({
         khal: "/opt/khal/bin/khal",
-        calendarEmails: { work: "old@work.com" },
         defaultAlarm: "none",
-        calendarAlarms: {},
+        calendars: { work: { email: "old@work.com" } },
       }),
     );
     const s = scripted(["", ""]);
@@ -109,22 +108,41 @@ describe("setup", () => {
     // the configured khal location survives a rerun of setup
     expect(await runOk(loadConfig(path))).toEqual({
       khal: "/opt/khal/bin/khal",
-      calendarEmails: { work: "old@work.com", "me@home.org": "me@home.org" },
       defaultAlarm: "none",
-      calendarAlarms: {},
+      calendars: { work: { email: "old@work.com" }, "me@home.org": { email: "me@home.org" } },
     });
     expect(s.prefills).toEqual(["old@work.com", "me@home.org"]);
     expect(t.closed()).toBe(1);
     expect(t.lines.join("\n")).toMatch(/Configuring 2 calendar\(s\)/);
-    expect(t.lines.join("\n")).toMatch(/Saved 2 mapping\(s\)/);
+    expect(t.lines.join("\n")).toMatch(/Saved 2 calendar\(s\)/);
+  });
+
+  it("keeps the reminders and the default reminder when it fills in addresses", async () => {
+    const path = join(dir, "cfg.json");
+    await writeFile(
+      path,
+      serializeConfig({
+        khal: "khal",
+        defaultAlarm: "15m",
+        calendars: { work: { email: "old@work.com", alarm: "1d" }, home: { alarm: "none" } },
+      }),
+    );
+    // work keeps its address, the second calendar (me@home.org) is new, home is not asked about
+    await runOk(setup(fake.settings({ configPath: path }), io(scripted(["", ""])).io));
+    expect(await runOk(loadConfig(path))).toEqual({
+      khal: "khal",
+      defaultAlarm: "15m",
+      calendars: {
+        work: { email: "old@work.com", alarm: "1d" },
+        home: { alarm: "none" },
+        "me@home.org": { email: "me@home.org" },
+      },
+    });
   });
 
   it("never writes an MCP_KHAL_BIN override back into the config file", async () => {
     const path = join(dir, "cfg.json");
-    await writeFile(
-      path,
-      serializeConfig({ khal: "khal", calendarEmails: {}, defaultAlarm: "none", calendarAlarms: {} }),
-    );
+    await writeFile(path, serializeConfig({ khal: "khal", defaultAlarm: "none", calendars: {} }));
     const settings = fake.settings({ configPath: path, khalSource: "MCP_KHAL_BIN" });
     await runOk(setup(settings, io(scripted(["", ""])).io));
     expect((await runOk(loadConfig(path))).khal).toBe("khal");
@@ -182,9 +200,8 @@ describe("runSetup", () => {
     expect(code).toBe(0);
     expect(await runOk(loadConfig(join(dir, "cfg.json")))).toEqual({
       khal: "khal",
-      calendarEmails: { work: "me@work.com" },
       defaultAlarm: "none",
-      calendarAlarms: {},
+      calendars: { work: { email: "me@work.com" } },
     });
     expect(lines).toHaveLength(2);
   });
@@ -215,17 +232,37 @@ describe("runSetup", () => {
 });
 
 describe("configure", () => {
-  it("prefills from the existing mapping, updates answers and skips blanks", async () => {
+  it("prefills from the existing addresses, updates answers and skips blanks", async () => {
     const s = scripted(["", "b@y.com", ""]);
-    const result = await runOk(configure(s.rl, ["a", "b", "c"], { a: "a@y.com" }));
-    expect(result).toEqual({ a: "a@y.com", b: "b@y.com" });
+    const result = await runOk(configure(s.rl, ["a", "b", "c"], { a: { email: "a@y.com" } }));
+    expect(result).toEqual({ a: { email: "a@y.com" }, b: { email: "b@y.com" } });
     expect(s.questions).toHaveLength(3);
     expect(s.prefills).toEqual(["a@y.com"]);
   });
 
-  it("keeps mappings for calendars that no longer exist", async () => {
+  it("keeps calendars that khal no longer has, with everything configured for them", async () => {
     const s = scripted([""]);
-    const result = await runOk(configure(s.rl, ["a"], { a: "a@y.com", gone: "g@y.com" }));
-    expect(result).toEqual({ a: "a@y.com", gone: "g@y.com" });
+    const result = await runOk(
+      configure(s.rl, ["a"], { a: { email: "a@y.com" }, gone: { email: "g@y.com", alarm: "1d" } }),
+    );
+    expect(result).toEqual({ a: { email: "a@y.com" }, gone: { email: "g@y.com", alarm: "1d" } });
+  });
+
+  it("changes only the address of a calendar: its reminder stays", async () => {
+    const s = scripted(["new@y.com"]);
+    const result = await runOk(configure(s.rl, ["a"], { a: { email: "old@y.com", alarm: "30m" } }));
+    expect(result).toEqual({ a: { email: "new@y.com", alarm: "30m" } });
+  });
+
+  it("adds an address to a calendar that so far only had a reminder", async () => {
+    const s = scripted(["a@y.com"]);
+    const result = await runOk(configure(s.rl, ["a"], { a: { alarm: "none" } }));
+    expect(result).toEqual({ a: { email: "a@y.com", alarm: "none" } });
+  });
+
+  it("leaves a calendar alone when the answer is blank and it has no address", async () => {
+    const s = scripted([""]);
+    const result = await runOk(configure(s.rl, ["a"], { a: { alarm: "none" } }));
+    expect(result).toEqual({ a: { alarm: "none" } });
   });
 });

@@ -35,9 +35,14 @@ export const startupReport = (settings: Settings): Record<string, unknown> => ({
   khal: { binary: settings.khal, source: settings.khalSource },
   timeoutMs: settings.timeoutMs,
   defaultAlarm: settings.defaultAlarm,
-  calendarAlarms: settings.calendarAlarms,
-  calendarEmails: Object.fromEntries(
-    Object.entries(settings.calendarEmails).map(([calendar, email]) => [calendar, maskEmail(email)]),
+  calendars: Object.fromEntries(
+    Object.entries(settings.calendars).map(([name, calendar]) => [
+      name,
+      {
+        ...(calendar.email === undefined ? {} : { email: maskEmail(calendar.email) }),
+        ...(calendar.alarm === undefined ? {} : { alarm: calendar.alarm }),
+      },
+    ]),
   ),
 });
 

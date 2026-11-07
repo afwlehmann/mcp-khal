@@ -68,9 +68,8 @@ describe("startupReport", () => {
     khal: "/cfg/khal",
     khalSource: "config",
     configPath: "/c.json",
-    calendarEmails: { work: "me@work.com" },
     defaultAlarm: "15m",
-    calendarAlarms: { home: "none", work: "1d" },
+    calendars: { work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } },
     timeoutMs: 5000,
   });
 
@@ -80,8 +79,7 @@ describe("startupReport", () => {
       khal: { binary: "/cfg/khal", source: "config" },
       timeoutMs: 5000,
       defaultAlarm: "15m",
-      calendarAlarms: { home: "none", work: "1d" },
-      calendarEmails: { work: "m***@work.com" },
+      calendars: { work: { email: "m***@work.com", alarm: "1d" }, home: { alarm: "none" } },
     });
   });
 
@@ -93,7 +91,7 @@ describe("startupReport", () => {
 
 describe("startupLine", () => {
   it("never contains a full email address", () => {
-    const line = startupLine(testSettings({ calendarEmails: { work: "me@work.com" } }));
+    const line = startupLine(testSettings({ calendars: { work: { email: "me@work.com" } } }));
     expect(line).toMatch(/^mcp-khal starting with configuration \{/);
     expect(line).toContain("m***@work.com");
     expect(line).not.toContain("me@work.com");

@@ -51,9 +51,8 @@ describe("the server process finds khal through its configuration", () => {
       config,
       serializeConfig({
         khal: khalInConfig,
-        calendarEmails: { work: "me@work.com" },
         defaultAlarm: "none",
-        calendarAlarms: {},
+        calendars: { work: { email: "me@work.com" } },
       }),
     );
     const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });
@@ -97,9 +96,8 @@ describe("the server process logs its configuration at startup", () => {
         config,
         serializeConfig({
           khal: "/cfg/khal",
-          calendarEmails: { work: "me@work.com" },
           defaultAlarm: "none",
-          calendarAlarms: {},
+          calendars: { work: { email: "me@work.com" } },
         }),
       );
       const transport = new StdioClientTransport({
@@ -153,12 +151,27 @@ describe("cli", () => {
     const dir = await tempDir();
     try {
       const config = join(dir, "bad-alarm.json");
-      await writeFile(config, '{"calendarAlarms":{"work":"in an hour"}}');
+      await writeFile(config, '{"calendars":{"work":{"alarm":"in an hour"}}}');
       const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
       expect(r.code).toBe(1);
       expect(r.stderr).toMatch(
-        /mcp-khal cannot start: InvalidInput: calendarAlarms entry 'work' must be a reminder like 30m, 2h or 1d/,
+        /mcp-khal cannot start: InvalidInput: calendars\.work\.alarm must be a reminder like 30m, 2h or 1d/,
       );
+    } finally {
+      await removeDir(dir);
+    }
+  });
+
+  it("the server explains where the retired calendarEmails and calendarAlarms keys went", async () => {
+    const dir = await tempDir();
+    try {
+      const config = join(dir, "old.json");
+      await writeFile(config, '{"calendarEmails":{"work":"me@work.com"},"calendarAlarms":{"work":"1d"}}');
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/2 problems:/);
+      expect(r.stderr).toContain(`config key 'calendarEmails' has moved into "calendars"`);
+      expect(r.stderr).toContain(`config key 'calendarAlarms' has moved into "calendars"`);
     } finally {
       await removeDir(dir);
     }
@@ -195,7 +208,7 @@ describe("cli", () => {
     it("when the config names a calendar that khal does not have", async () => {
       const config = await configWith("typo.json", {
         khal: join(fake.dir, "khal"),
-        calendarEmails: { wrok: "me@work.com" },
+        calendars: { wrok: { email: "me@work.com" } },
       });
       const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
       expect(r.code).toBe(1);
@@ -214,7 +227,7 @@ describe("cli", () => {
       const config = await configWith("many.json", {
         khal: "./khal",
         defaultAlarm: "soon",
-        calendarEmails: { work: "nope" },
+        calendars: { work: { email: "nope" } },
       });
       const r = await run([], { ...env, MCP_KHAL_CONFIG: config, MCP_KHAL_BIN: "~/khal" });
       expect(r.code).toBe(1);
@@ -223,7 +236,7 @@ describe("cli", () => {
         "MCP_KHAL_BIN must not start with '~'",
         "config 'khal' must be a bare command name",
         "defaultAlarm must be a reminder",
-        "calendarEmails entry 'work' is not a valid email address",
+        "calendars.work.email is not a valid email address",
       ])
         expect(r.stderr).toContain(part);
     });
@@ -231,9 +244,8 @@ describe("cli", () => {
     it("but starts when everything checks out", async () => {
       const config = await configWith("fine.json", {
         khal: join(fake.dir, "khal"),
-        calendarEmails: { work: " me@work.com " },
         defaultAlarm: " 15m ",
-        calendarAlarms: { " home ": "none" },
+        calendars: { work: { email: " me@work.com " }, " home ": { alarm: "none" } },
       });
       const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });
       try {

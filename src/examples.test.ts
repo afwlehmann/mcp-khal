@@ -12,9 +12,12 @@ describe("examples/mcp-khal.json", () => {
     const config = unwrap(parseConfig(await example("mcp-khal.json")));
     expect(config).toEqual({
       khal: "khal",
-      calendarEmails: { work: "me@example.com", private: "me@example.org" },
       defaultAlarm: "15m",
-      calendarAlarms: { work: "1d", private: "none", school: "90m" },
+      calendars: {
+        work: { email: "me@example.com", alarm: "1d" },
+        private: { email: "me@example.org", alarm: "none" },
+        school: { alarm: "90m" },
+      },
     });
   });
 

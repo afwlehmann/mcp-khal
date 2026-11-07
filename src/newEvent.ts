@@ -36,7 +36,7 @@ export const newEvent = (
   if (!invited && recurrence === undefined) return execute(settings, newArgs(withAlarm));
   return Effect.gen(function* () {
     const from = invited
-      ? yield* Effect.fromResult(resolveAddress(settings.calendarEmails, p.calendar, organizer))
+      ? yield* Effect.fromResult(resolveAddress(settings.calendars, p.calendar, organizer))
       : undefined;
     const params = yield* Effect.fromResult(
       toIcsParams({ ...withAlarm, recurrence, attendees, organizer: from }),

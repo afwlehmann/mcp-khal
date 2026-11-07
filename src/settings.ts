@@ -1,13 +1,13 @@
 import { isAbsolute } from "node:path";
 import { Effect, Result } from "effect";
 import {
+  type Calendars,
   type Config,
   type ConfigSource,
   checkEnvBinary,
   configLocation,
   defaultConfig,
   type Env,
-  type Mapping,
   readConfig,
   resolveKhalBinary,
 } from "./config.js";
@@ -23,11 +23,10 @@ export interface Settings {
   readonly khal: string;
   /** where `khal` came from: the environment overrides the config file */
   readonly khalSource: "MCP_KHAL_BIN" | "config";
-  readonly calendarEmails: Mapping;
   /** reminder for new events without an explicit `alarm`: `15m`, `2h`, `1d` or `none` */
   readonly defaultAlarm: string;
-  /** calendar name -> reminder that overrides `defaultAlarm` for that calendar */
-  readonly calendarAlarms: Mapping;
+  /** per calendar: the user's address there and the reminder that overrides `defaultAlarm` */
+  readonly calendars: Calendars;
   readonly configPath: string;
   /** which variable (or the default) decided `configPath` */
   readonly configSource: ConfigSource;
@@ -62,9 +61,8 @@ export const buildSettings = (input: {
   return {
     khal: binary,
     khalSource: source,
-    calendarEmails: input.config.calendarEmails,
     defaultAlarm: input.config.defaultAlarm,
-    calendarAlarms: input.config.calendarAlarms,
+    calendars: input.config.calendars,
     configPath: input.configPath,
     configSource: input.configSource ?? "default",
     configFound: input.configFound ?? true,
