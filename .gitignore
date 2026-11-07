@@ -3,3 +3,4 @@ dist/
 coverage/
 result
 .pre-commit-config.yaml
+.claude/
