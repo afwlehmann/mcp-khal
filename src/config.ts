@@ -23,7 +23,7 @@ export const NO_ALARM = "none";
 export interface CalendarConfig {
   /** the user's own address on this calendar: the organizer of invites */
   readonly email?: string;
-  /** reminder for new events on this calendar; overrides `Config.defaultAlarm` */
+  /** reminder for new events on this calendar; none when unset */
   readonly alarm?: AlarmSetting;
 }
 
@@ -33,15 +33,18 @@ export type Calendars = Readonly<Record<string, CalendarConfig>>;
 export interface Config {
   /** the khal executable: a name looked up on PATH or an absolute path */
   readonly khal: string;
-  /** reminder for events without an explicit `alarm`, unless the calendar has its own */
-  readonly defaultAlarm: AlarmSetting;
+  /**
+   * The calendar `new_event` uses when the call names none, so that calendar's `email` and `alarm`
+   * apply. Unset: khal files the event in its own default calendar, whose settings are unknown.
+   * It has to exist in khal, which the startup checks verify.
+   */
+  readonly defaultCalendar?: string;
   readonly calendars: Calendars;
 }
 
 export const DEFAULT_KHAL = "khal";
 export const defaultConfig: Config = {
   khal: DEFAULT_KHAL,
-  defaultAlarm: NO_ALARM,
   calendars: {},
 };
 
@@ -214,10 +217,12 @@ const parseCalendars = (
   });
 };
 
-/** v1.0.0 and v1.2.0 keys that moved into `calendars.<name>`; named in the error so users can migrate. */
+/** v1.2.0 keys that are gone or moved into `calendars.<name>`; named in the error so users can migrate. */
 const RETIRED_KEYS: Readonly<Record<string, string>> = {
   calendarEmails: 'moved into "calendars": { "<name>": { "email": "..." } }',
   calendarAlarms: 'moved into "calendars": { "<name>": { "alarm": "..." } }',
+  defaultAlarm:
+    'been dropped: set "alarm" on each calendar under "calendars", and name the calendar for events without one in "defaultCalendar"',
 };
 
 const parseBinary = (raw: unknown): Validated<string> =>
@@ -225,10 +230,16 @@ const parseBinary = (raw: unknown): Validated<string> =>
     ? checkBinary(raw, "config 'khal'")
     : problem(`config 'khal' must be a string, got ${JSON.stringify(raw)}`);
 
-const CONFIG_KEYS: readonly string[] = ["khal", "defaultAlarm", "calendars"];
+/** Every key the config file knows, in the order they are written. */
+export const CONFIG_KEYS: readonly string[] = ["khal", "defaultCalendar", "calendars"];
+
+const parseDefaultCalendar = (raw: unknown): Validated<string> =>
+  typeof raw === "string"
+    ? checkCalendarName(raw, "defaultCalendar")
+    : problem(`defaultCalendar must be a calendar name (a string), got ${JSON.stringify(raw)}`);
 
 /**
- * `{ "khal": "khal", "defaultAlarm": "15m",
+ * `{ "khal": "khal", "defaultCalendar": "work",
  *    "calendars": { "work": { "email": "me@example.com", "alarm": "1d" } } }`; all keys are optional.
  * A flat `{ "work": "me@example.com" }` (the format of v1.0.0) is still understood.
  * Every problem of the file is reported, not only the first.
@@ -265,14 +276,18 @@ export const parseConfigValidated = (json: string): Validated<Config> =>
               ),
           ),
           khal: raw.khal === undefined ? valid(DEFAULT_KHAL) : parseBinary(raw.khal),
-          defaultAlarm:
-            raw.defaultAlarm === undefined ? valid(NO_ALARM) : parseAlarm(raw.defaultAlarm, "defaultAlarm"),
+          defaultCalendar:
+            raw.defaultCalendar === undefined ? valid(undefined) : parseDefaultCalendar(raw.defaultCalendar),
           calendars:
             raw.calendars === undefined
               ? valid({} as Calendars)
               : parseCalendars(raw.calendars, "calendars", parseCalendar),
         }),
-        ({ khal, defaultAlarm, calendars }): Config => ({ khal, defaultAlarm, calendars }),
+        ({ khal, defaultCalendar, calendars }): Config => ({
+          khal,
+          ...(defaultCalendar === undefined ? {} : { defaultCalendar }),
+          calendars,
+        }),
       );
     },
   );
@@ -280,8 +295,26 @@ export const parseConfigValidated = (json: string): Validated<Config> =>
 export const parseConfig = (json: string): Result.Result<Config, InvalidInput> =>
   orInvalidInput(parseConfigValidated(json));
 
+/** `defaultCalendar` is only written when it is set. */
 export const serializeConfig = (c: Config): string =>
-  `${JSON.stringify({ khal: c.khal, defaultAlarm: c.defaultAlarm, calendars: c.calendars }, null, 2)}\n`;
+  `${JSON.stringify(
+    {
+      khal: c.khal,
+      ...(c.defaultCalendar === undefined ? {} : { defaultCalendar: c.defaultCalendar }),
+      calendars: c.calendars,
+    },
+    null,
+    2,
+  )}\n`;
+
+/**
+ * The calendar a new event goes to: the one the call names, else the configured default
+ * calendar, else none (khal then uses its own default).
+ */
+export const resolveCalendar = (
+  config: Pick<Config, "defaultCalendar">,
+  calendar: string | undefined,
+): string | undefined => (calendar !== undefined ? calendar.trim() : config.defaultCalendar);
 
 /** The settings of one calendar, by the (trimmed) name; inherited object properties never match. */
 const calendarOf = (calendars: Calendars, calendar: string | undefined): CalendarConfig | undefined => {
@@ -290,16 +323,17 @@ const calendarOf = (calendars: Calendars, calendar: string | undefined): Calenda
 };
 
 /**
- * The reminder for a new event: an explicit `alarm` wins, then the calendar's own setting, then
- * the default. `none` (explicit or configured) means no reminder, expressed as `undefined`.
+ * The reminder for a new event: an explicit `alarm` wins, then the calendar's own `alarm`;
+ * with neither there is no reminder. `none` (explicit or configured) also means no reminder,
+ * expressed as `undefined`.
  */
 export const resolveAlarm = (
-  settings: Pick<Config, "defaultAlarm" | "calendars">,
+  settings: Pick<Config, "calendars">,
   calendar: string | undefined,
   explicit: string | undefined,
 ): string | undefined => {
-  const chosen = explicit?.trim() ?? calendarOf(settings.calendars, calendar)?.alarm ?? settings.defaultAlarm;
-  return chosen === NO_ALARM ? undefined : chosen;
+  const chosen = explicit?.trim() ?? calendarOf(settings.calendars, calendar)?.alarm;
+  return chosen === undefined || chosen === NO_ALARM ? undefined : chosen;
 };
 
 /** Answer to a setup prompt: blank keeps the default (or skips), otherwise must be an email. */

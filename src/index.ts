@@ -15,8 +15,8 @@ const startup = Effect.gen(function* () {
   const settings = yield* loadSettings({ env: process.env, home: homedir(), tmpDir: tmpdir() });
   // stderr: stdout belongs to the MCP protocol
   console.error(startupLine(settings));
-  yield* preflight(settings);
-  return settings;
+  // returns the settings with the default calendar worked out
+  return yield* preflight(settings);
 });
 
 const settings = await Effect.runPromise(

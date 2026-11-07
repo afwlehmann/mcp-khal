@@ -55,7 +55,6 @@ export const removeDir = (dir: string): Promise<void> => rm(dir, { recursive: tr
 export const testSettings = (overrides: Partial<Settings> = {}): Settings => ({
   khal: "khal",
   khalSource: "config",
-  defaultAlarm: "none",
   calendars: {},
   configPath: join(tmpdir(), "mcp-khal-tests-no-such-dir", "mcp-khal.json"),
   configSource: "default",

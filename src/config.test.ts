@@ -11,6 +11,7 @@ import {
   parseConfig,
   resolveAddress,
   resolveAlarm,
+  resolveCalendar,
   resolveKhalBinary,
   serializeConfig,
 } from "./config.js";
@@ -134,17 +135,16 @@ describe("parseConfig / serializeConfig", () => {
   it("roundtrips a config", () => {
     const c = {
       khal: "/nix/store/x-khal/bin/khal",
-      defaultAlarm: "15m",
+      defaultCalendar: "work",
       calendars: { work: { email: "me@example.com", alarm: "1d" }, home: { alarm: "none" } },
     };
     expect(unwrap(parseConfig(serializeConfig(c)))).toEqual(c);
   });
 
-  it("defaults khal to 'khal', the reminder to none and the calendars to empty", () => {
-    expect(unwrap(parseConfig("{}"))).toEqual({ khal: "khal", defaultAlarm: "none", calendars: {} });
+  it("defaults khal to 'khal', the default calendar to unset and the calendars to empty", () => {
+    expect(unwrap(parseConfig("{}"))).toEqual({ khal: "khal", calendars: {} });
     expect(unwrap(parseConfig('{"khal":"/usr/local/bin/khal"}'))).toEqual({
       khal: "/usr/local/bin/khal",
-      defaultAlarm: "none",
       calendars: {},
     });
   });
@@ -180,7 +180,6 @@ describe("parseConfig / serializeConfig", () => {
   it("still reads the flat calendar -> email format of v1.0.0", () => {
     expect(unwrap(parseConfig('{"work":"me@example.com","home":"me@home.org"}'))).toEqual({
       khal: "khal",
-      defaultAlarm: "none",
       calendars: { work: { email: "me@example.com" }, home: { email: "me@home.org" } },
     });
   });
@@ -196,7 +195,7 @@ describe("parseConfig / serializeConfig", () => {
     expect(failure(parseConfig('{"khal":42}')).message).toMatch(/must be a string, got 42/);
     expect(failure(parseConfig('{"khal":"kh\\nal"}')).message).toMatch(/non-empty/);
     expect(failure(parseConfig('{"khal":"khal","typo":1}')).message).toMatch(
-      /unknown config key 'typo' \(expected 'khal', 'defaultAlarm', 'calendars'\)/,
+      /unknown config key 'typo' \(expected 'khal', 'defaultCalendar', 'calendars'\)/,
     );
     expect(failure(parseConfig('{"work":"nope"}')).message).toMatch(/unknown config key 'work'/);
   });
@@ -302,19 +301,15 @@ describe("isAlarmSetting", () => {
 });
 
 describe("reminders in the config", () => {
-  it("default to no reminder", () => {
-    const c = unwrap(parseConfig("{}"));
-    expect(c.defaultAlarm).toBe("none");
-    expect(c.calendars).toEqual({});
+  it("only exist on a calendar: none unless it has an alarm", () => {
+    expect(unwrap(parseConfig("{}")).calendars).toEqual({});
+    expect(unwrap(parseConfig('{"calendars":{"work":{}}}')).calendars).toEqual({ work: {} });
   });
 
-  it("read a default reminder and per-calendar reminders, including none", () => {
+  it("are read per calendar, including none", () => {
     const c = unwrap(
-      parseConfig(
-        '{"defaultAlarm":"15m","calendars":{"work":{"alarm":"1d"},"home":{"alarm":"none"},"school":{"alarm":"90m"}}}',
-      ),
+      parseConfig('{"calendars":{"work":{"alarm":"1d"},"home":{"alarm":"none"},"school":{"alarm":"90m"}}}'),
     );
-    expect(c.defaultAlarm).toBe("15m");
     expect(c.calendars).toEqual({
       work: { alarm: "1d" },
       home: { alarm: "none" },
@@ -322,26 +317,69 @@ describe("reminders in the config", () => {
     });
   });
 
-  it("are written even when they are the defaults, so users see where to set them", () => {
-    expect(JSON.parse(serializeConfig(defaultConfig))).toEqual({
-      khal: "khal",
-      defaultAlarm: "none",
-      calendars: {},
-    });
+  it("are not a global setting: nothing about them is written next to the calendars", () => {
+    expect(JSON.parse(serializeConfig(defaultConfig))).toEqual({ khal: "khal", calendars: {} });
   });
 
-  it.each(["15", "1w", "-5m", "", "5 m", "10000m", "None", 15, null, true, ["15m"], { m: 15 }])(
-    "reject an invalid defaultAlarm: %j",
-    (value) => {
-      const e = failure(parseConfig(JSON.stringify({ defaultAlarm: value })));
-      expect(e._tag).toBe("InvalidInput");
-      expect(e.message).toMatch(/^defaultAlarm must be a reminder like 30m, 2h or 1d/);
-      expect(e.message).toContain(JSON.stringify(value));
-    },
-  );
+  it("explains that the retired defaultAlarm key is gone and what replaces it", () => {
+    expect(failure(parseConfig('{"defaultAlarm":"15m"}')).message).toBe(
+      `config key 'defaultAlarm' has been dropped: set "alarm" on each calendar under "calendars", and name the calendar for events without one in "defaultCalendar"`,
+    );
+  });
+});
 
-  it("are not mistaken for the flat v1.0.0 mapping", () => {
-    expect(unwrap(parseConfig('{"defaultAlarm":"15m"}')).defaultAlarm).toBe("15m");
+describe("defaultCalendar", () => {
+  it("is read and trimmed", () => {
+    expect(unwrap(parseConfig('{"defaultCalendar":"  work \\n"}')).defaultCalendar).toBe("work");
+  });
+
+  it("is optional: absent when not configured, and only written when set", () => {
+    const c = unwrap(parseConfig("{}"));
+    expect("defaultCalendar" in c).toBe(false);
+    expect(Object.keys(JSON.parse(serializeConfig(c)) as object)).toEqual(["khal", "calendars"]);
+    expect(Object.keys(JSON.parse(serializeConfig({ ...c, defaultCalendar: "work" })) as object)).toEqual([
+      "khal",
+      "defaultCalendar",
+      "calendars",
+    ]);
+  });
+
+  it("does not have to be one of the configured calendars (khal decides that at startup)", () => {
+    expect(unwrap(parseConfig('{"defaultCalendar":"work","calendars":{"home":{}}}')).defaultCalendar).toBe(
+      "work",
+    );
+  });
+
+  it.each([42, null, true, ["work"], { a: 1 }])("rejects the non-string %j", (value) => {
+    expect(failure(parseConfig(JSON.stringify({ defaultCalendar: value }))).message).toBe(
+      `defaultCalendar must be a calendar name (a string), got ${JSON.stringify(value)}`,
+    );
+  });
+
+  it("rejects an empty name, also after trimming, and control characters", () => {
+    for (const value of ["", "   ", "\t"])
+      expect(failure(parseConfig(JSON.stringify({ defaultCalendar: value }))).message).toBe(
+        "defaultCalendar has an empty calendar name",
+      );
+    expect(failure(parseConfig('{"defaultCalendar":"wo\\u0001rk"}')).message).toMatch(
+      /^defaultCalendar has a calendar name with control characters/,
+    );
+  });
+});
+
+describe("resolveCalendar", () => {
+  it("prefers the calendar of the call, trimmed, over the default calendar", () => {
+    expect(resolveCalendar({ defaultCalendar: "work" }, " home ")).toBe("home");
+    expect(resolveCalendar({}, "home")).toBe("home");
+  });
+
+  it("falls back to the default calendar, and to nothing", () => {
+    expect(resolveCalendar({ defaultCalendar: "work" }, undefined)).toBe("work");
+    expect(resolveCalendar({}, undefined)).toBeUndefined();
+  });
+
+  it("keeps a blank calendar of the call blank, so it is rejected instead of silently replaced", () => {
+    expect(resolveCalendar({ defaultCalendar: "work" }, "  ")).toBe("");
   });
 });
 
@@ -351,7 +389,7 @@ describe("trimming", () => {
       parseConfig(
         JSON.stringify({
           khal: "  /usr/bin/khal\n",
-          defaultAlarm: " 15m ",
+          defaultCalendar: " work ",
           calendars: {
             " work ": { email: "  me@work.com ", alarm: "\t1d" },
             "\thome": { email: "me@home.org\n", alarm: " none " },
@@ -361,7 +399,7 @@ describe("trimming", () => {
     );
     expect(c).toEqual({
       khal: "/usr/bin/khal",
-      defaultAlarm: "15m",
+      defaultCalendar: "work",
       calendars: {
         work: { email: "me@work.com", alarm: "1d" },
         home: { email: "me@home.org", alarm: "none" },
@@ -370,7 +408,9 @@ describe("trimming", () => {
   });
 
   it("does not trim inside a value: '5 m' stays invalid", () => {
-    expect(failure(parseConfig('{"defaultAlarm":" 5 m "}')).message).toMatch(/defaultAlarm must be/);
+    expect(failure(parseConfig('{"calendars":{"work":{"alarm":" 5 m "}}}')).message).toMatch(
+      /calendars\.work\.alarm must be/,
+    );
   });
 
   it("rejects names that are only whitespace", () => {
@@ -393,7 +433,7 @@ describe("trimming", () => {
   });
 
   it("trims an explicit alarm and the calendar when resolving a reminder", () => {
-    const settings = { defaultAlarm: "15m", calendars: { work: { alarm: "1d" } } };
+    const settings = { calendars: { work: { alarm: "1d" } } };
     expect(resolveAlarm(settings, " work ", undefined)).toBe("1d");
     expect(resolveAlarm(settings, "work", " 5m ")).toBe("5m");
     expect(resolveAlarm(settings, "work", " none ")).toBeUndefined();
@@ -406,7 +446,7 @@ describe("reporting all problems at once", () => {
       parseConfig(
         JSON.stringify({
           khal: "./khal",
-          defaultAlarm: "soon",
+          defaultCalendar: 42,
           calendars: {
             work: { email: "nope", alarm: "1w" },
             home: { email: "me@home.org", alarm: "1d" },
@@ -422,7 +462,7 @@ describe("reporting all problems at once", () => {
       "unknown config key 'typo'",
       "unknown config key 'another'",
       "config 'khal' must be a bare command name",
-      "defaultAlarm must be a reminder like 30m",
+      "defaultCalendar must be a calendar name (a string), got 42",
       "calendars.work.email is not a valid email address",
       "calendars.work.alarm must be a reminder like 30m",
     ])
@@ -439,7 +479,9 @@ describe("reporting all problems at once", () => {
   });
 
   it("reports one problem as a plain message, without a list", () => {
-    expect(failure(parseConfig('{"defaultAlarm":"soon"}')).message).toMatch(/^defaultAlarm must be/);
+    expect(failure(parseConfig('{"defaultCalendar":42}')).message).toMatch(
+      /^defaultCalendar must be a calendar name/,
+    );
   });
 
   it("keeps the dependency between steps: not JSON means only that one problem", () => {
@@ -455,7 +497,6 @@ describe("reporting all problems at once", () => {
 
 describe("resolveAlarm", () => {
   const settings = {
-    defaultAlarm: "15m",
     calendars: {
       work: { email: "me@work.com", alarm: "1d" },
       home: { alarm: "none" },
@@ -474,35 +515,26 @@ describe("resolveAlarm", () => {
     expect(resolveAlarm(settings, undefined, "none")).toBeUndefined();
   });
 
-  it("uses the calendar's reminder, then the default", () => {
+  it("uses the calendar's own reminder", () => {
     expect(resolveAlarm(settings, "work", undefined)).toBe("1d");
-    expect(resolveAlarm(settings, "other", undefined)).toBe("15m");
-    expect(resolveAlarm(settings, undefined, undefined)).toBe("15m");
   });
 
-  it("falls back to the default for a calendar that is configured but has no reminder", () => {
-    expect(resolveAlarm(settings, "declared", undefined)).toBe("15m");
-    expect(
-      resolveAlarm({ ...settings, calendars: { work: { email: "me@work.com" } } }, "work", undefined),
-    ).toBe("15m");
-  });
-
-  it("lets a calendar opt out of a configured default with 'none'", () => {
+  it("gives no reminder for a calendar that has none, 'none', or that is not configured", () => {
+    expect(resolveAlarm(settings, "declared", undefined)).toBeUndefined();
     expect(resolveAlarm(settings, "home", undefined)).toBeUndefined();
-  });
-
-  it("gives no reminder when nothing is configured", () => {
-    expect(resolveAlarm({ defaultAlarm: "none", calendars: {} }, "work", undefined)).toBeUndefined();
+    expect(resolveAlarm(settings, "other", undefined)).toBeUndefined();
+    expect(resolveAlarm(settings, undefined, undefined)).toBeUndefined();
+    expect(resolveAlarm({ calendars: {} }, "work", undefined)).toBeUndefined();
   });
 
   it("ignores inherited object properties as calendar names", () => {
-    expect(resolveAlarm(settings, "constructor", undefined)).toBe("15m");
-    expect(resolveAlarm(settings, "__proto__", undefined)).toBe("15m");
+    expect(resolveAlarm(settings, "constructor", undefined)).toBeUndefined();
+    expect(resolveAlarm(settings, "__proto__", undefined)).toBeUndefined();
   });
 });
 
 describe("resolveKhalBinary", () => {
-  const config = { khal: "/from/config/khal", defaultAlarm: "none", calendars: {} };
+  const config = { khal: "/from/config/khal", calendars: {} };
 
   it("prefers MCP_KHAL_BIN over the config, which beats the default", () => {
     expect(resolveKhalBinary({ MCP_KHAL_BIN: "/from/env/khal" }, config)).toEqual({

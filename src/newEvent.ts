@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { resolveAddress, resolveAlarm } from "./config.js";
+import { resolveAddress, resolveAlarm, resolveCalendar } from "./config.js";
 import { InvalidInput, type KhalError } from "./errors.js";
 import { execute, importIcs, type NewParams, newArgs } from "./khal.js";
 import { buildIcs, type RecurrenceSpec, toIcsParams } from "./recurrence.js";
@@ -31,17 +31,26 @@ export const newEvent = (
   const invited = attendees.length > 0;
   if (!invited && organizer !== undefined)
     return Effect.fail(new InvalidInput({ message: "organizer is only valid together with attendees" }));
-  // an explicit alarm wins, then the calendar's setting, then the default; `none` means no reminder
-  const withAlarm = { ...p, alarm: resolveAlarm(settings, p.calendar, p.alarm) };
+  // the calendar the call names, else the default calendar; khal's own default is never relied on
+  const calendar = resolveCalendar(settings, p.calendar);
+  if (calendar === undefined)
+    return Effect.fail(
+      new InvalidInput({
+        message:
+          'no calendar given and no default calendar is configured: pass "calendar" (see list_calendars) or set "defaultCalendar" in the config',
+      }),
+    );
+  // an explicit alarm wins, then the calendar's own `alarm`; `none` or neither means no reminder
+  const withAlarm = { ...p, calendar, alarm: resolveAlarm(settings, calendar, p.alarm) };
   if (!invited && recurrence === undefined) return execute(settings, newArgs(withAlarm));
   return Effect.gen(function* () {
     const from = invited
-      ? yield* Effect.fromResult(resolveAddress(settings.calendars, p.calendar, organizer))
+      ? yield* Effect.fromResult(resolveAddress(settings.calendars, calendar, organizer))
       : undefined;
     const params = yield* Effect.fromResult(
       toIcsParams({ ...withAlarm, recurrence, attendees, organizer: from }),
     );
     const ics = yield* Effect.fromResult(buildIcs(params, `${uid}@mcp-khal`, timestamp(now)));
-    return yield* importIcs(settings, p.calendar, ics);
+    return yield* importIcs(settings, calendar, ics);
   });
 };

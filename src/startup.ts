@@ -34,7 +34,7 @@ export const startupReport = (settings: Settings): Record<string, unknown> => ({
   configPath: settings.configPath,
   khal: { binary: settings.khal, source: settings.khalSource },
   timeoutMs: settings.timeoutMs,
-  defaultAlarm: settings.defaultAlarm,
+  ...(settings.defaultCalendar === undefined ? {} : { defaultCalendar: settings.defaultCalendar }),
   calendars: Object.fromEntries(
     Object.entries(settings.calendars).map(([name, calendar]) => [
       name,

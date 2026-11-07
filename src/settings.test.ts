@@ -9,7 +9,6 @@ import { removeDir, runFail, runOk, tempDir } from "./testlib.js";
 describe("buildSettings", () => {
   const config = {
     khal: "/cfg/khal",
-    defaultAlarm: "none",
     calendars: { work: { email: "me@work.com" } },
   };
   const build = (env: Record<string, string | undefined>) =>
@@ -27,16 +26,20 @@ describe("buildSettings", () => {
     });
   });
 
-  it("carries the default reminder and the per-calendar settings into the settings", () => {
+  it("carries the default calendar and the per-calendar settings into the settings", () => {
     const calendars = { work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } };
     const s = buildSettings({
       env: {},
-      config: { ...config, defaultAlarm: "15m", calendars },
+      config: { ...config, defaultCalendar: "work", calendars },
       configPath: "/c.json",
       tmpDir: "/tmp/x",
     });
-    expect(s.defaultAlarm).toBe("15m");
+    expect(s.defaultCalendar).toBe("work");
     expect(s.calendars).toEqual(calendars);
+  });
+
+  it("has no default calendar when the config names none (the preflight works it out)", () => {
+    expect("defaultCalendar" in build({})).toBe(false);
   });
 
   it("lets MCP_KHAL_BIN override the config", () => {
@@ -75,7 +78,6 @@ describe("loadSettings", () => {
       path,
       serializeConfig({
         khal: "/cfg/khal",
-        defaultAlarm: "none",
         calendars: { work: { email: "me@work.com" } },
       }),
     );
@@ -101,31 +103,31 @@ describe("loadSettings", () => {
 
   it("applies MCP_KHAL_BIN on top of the file", async () => {
     const path = join(dir, "cfg2.json");
-    await writeFile(path, serializeConfig({ khal: "/cfg/khal", defaultAlarm: "none", calendars: {} }));
+    await writeFile(path, serializeConfig({ khal: "/cfg/khal", calendars: {} }));
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "/env/khal" })));
     expect(s).toMatchObject({ khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
   });
 
-  it("reads the default reminder and the per-calendar settings from the file", async () => {
+  it("reads the default calendar and the per-calendar settings from the file", async () => {
     const path = join(dir, "alarms.json");
     await writeFile(
       path,
-      '{"defaultAlarm":"15m","calendars":{"work":{"email":"me@work.com","alarm":"1d"},"home":{"alarm":"none"}}}',
+      '{"defaultCalendar":"work","calendars":{"work":{"email":"me@work.com","alarm":"1d"},"home":{"alarm":"none"}}}',
     );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
-    expect(s.defaultAlarm).toBe("15m");
+    expect(s.defaultCalendar).toBe("work");
     expect(s.calendars).toEqual({ work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } });
   });
 
   it.each([
-    ['{"defaultAlarm":"15"}', /defaultAlarm must be a reminder like 30m, 2h or 1d/],
-    ['{"defaultAlarm":"1w"}', /defaultAlarm must be/],
-    ['{"defaultAlarm":15}', /defaultAlarm must be/],
+    ['{"defaultCalendar":15}', /defaultCalendar must be a calendar name/],
+    ['{"defaultCalendar":"  "}', /defaultCalendar has an empty calendar name/],
+    ['{"defaultAlarm":"15m"}', /config key 'defaultAlarm' has been dropped/],
     ['{"calendars":{"work":{"alarm":"soon"}}}', /calendars\.work\.alarm must be/],
     ['{"calendars":{"work":{"alarm":"1d"},"home":{"alarm":"-5m"}}}', /calendars\.home\.alarm must be/],
     ['{"calendars":"15m"}', /calendars must be a JSON object/],
     ['{"calendars":{"work":"15m"}}', /calendars\.work must be an object/],
-  ])("refuses to start with an invalid reminder in the config: %s", async (content, message) => {
+  ])("refuses to start with an invalid calendar setting in the config: %s", async (content, message) => {
     const path = join(dir, "bad-alarm.json");
     await writeFile(path, content);
     const e = await runFail(loadSettings(input({ MCP_KHAL_CONFIG: path })));
@@ -210,7 +212,7 @@ describe("loadSettings", () => {
       "temporary directory must be an absolute path",
       "unknown config key 'typo'",
       "config 'khal' must be a bare command name",
-      "defaultAlarm must be a reminder",
+      "config key 'defaultAlarm' has been dropped",
     ])
       expect(e.message).toContain(part);
   });

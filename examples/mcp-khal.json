@@ -1,6 +1,6 @@
 {
   "khal": "khal",
-  "defaultAlarm": "15m",
+  "defaultCalendar": "work",
   "calendars": {
     "work": { "email": "me@example.com", "alarm": "1d" },
     "private": { "email": "me@example.org", "alarm": "none" },

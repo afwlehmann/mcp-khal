@@ -51,7 +51,6 @@ describe("the server process finds khal through its configuration", () => {
       config,
       serializeConfig({
         khal: khalInConfig,
-        defaultAlarm: "none",
         calendars: { work: { email: "me@work.com" } },
       }),
     );
@@ -96,7 +95,6 @@ describe("the server process logs its configuration at startup", () => {
         config,
         serializeConfig({
           khal: "/cfg/khal",
-          defaultAlarm: "none",
           calendars: { work: { email: "me@work.com" } },
         }),
       );
@@ -208,13 +206,33 @@ describe("cli", () => {
     it("when the config names a calendar that khal does not have", async () => {
       const config = await configWith("typo.json", {
         khal: join(fake.dir, "khal"),
+        defaultCalendar: "work",
         calendars: { wrok: { email: "me@work.com" } },
       });
       const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
       expect(r.code).toBe(1);
       expect(r.stderr).toMatch(
-        /the config names calendars that khal does not know: wrok \(khal has: work, home\)/,
+        /the config names calendars that khal does not know: wrok \(khal has: home, work\)/,
       );
+    });
+
+    it("when khal has several calendars and the config names no default calendar", async () => {
+      const config = await configWith("no-default.json", { khal: join(fake.dir, "khal") });
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(
+        'khal has several calendars (home, work): set "defaultCalendar" to the one new events go to when a call names no calendar',
+      );
+    });
+
+    it("when the default calendar does not exist in khal", async () => {
+      const config = await configWith("bad-default.json", {
+        khal: join(fake.dir, "khal"),
+        defaultCalendar: "wrok",
+      });
+      const r = await run([], { ...env, MCP_KHAL_CONFIG: config });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("defaultCalendar 'wrok' does not exist in khal (khal has: home, work)");
     });
 
     it("when MCP_KHAL_CONFIG names a file that does not exist", async () => {
@@ -226,7 +244,7 @@ describe("cli", () => {
     it("listing every problem, not only the first", async () => {
       const config = await configWith("many.json", {
         khal: "./khal",
-        defaultAlarm: "soon",
+        defaultCalendar: 42,
         calendars: { work: { email: "nope" } },
       });
       const r = await run([], { ...env, MCP_KHAL_CONFIG: config, MCP_KHAL_BIN: "~/khal" });
@@ -235,7 +253,7 @@ describe("cli", () => {
       for (const part of [
         "MCP_KHAL_BIN must not start with '~'",
         "config 'khal' must be a bare command name",
-        "defaultAlarm must be a reminder",
+        "defaultCalendar must be a calendar name",
         "calendars.work.email is not a valid email address",
       ])
         expect(r.stderr).toContain(part);
@@ -244,7 +262,7 @@ describe("cli", () => {
     it("but starts when everything checks out", async () => {
       const config = await configWith("fine.json", {
         khal: join(fake.dir, "khal"),
-        defaultAlarm: " 15m ",
+        defaultCalendar: " work ",
         calendars: { work: { email: " me@work.com " }, " home ": { alarm: "none" } },
       });
       const client = new Client({ name: "mcp-khal-test", version: "0.0.0" });

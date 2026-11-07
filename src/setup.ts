@@ -53,6 +53,31 @@ export const promptFor = (
 };
 
 /**
+ * Which calendar new events go to when a call names none. Asked only when khal has several
+ * calendars; the answer must be one of them. Re-prompts until it is.
+ */
+export const promptDefaultCalendar = (
+  rl: Interface,
+  names: readonly string[],
+  current: string | undefined,
+): Effect.Effect<string, KhalError> => {
+  const fallback = current !== undefined && names.includes(current) ? current : undefined;
+  const loop: Effect.Effect<string, KhalError> = Effect.flatMap(
+    ask(rl, `Calendar for new events when none is named (${names.join(", ")}): `, fallback),
+    (answer) => {
+      const chosen = answer.trim() === "" ? fallback : answer.trim();
+      return chosen !== undefined && names.includes(chosen)
+        ? Effect.succeed(chosen)
+        : Effect.flatMap(
+            Effect.sync(() => console.error(`  must be one of: ${names.join(", ")}`)),
+            () => loop,
+          );
+    },
+  );
+  return loop;
+};
+
+/**
  * Steps through the calendars, prefilling each prompt with the calendar's configured address.
  * Only the address is asked for and changed; everything else configured for a calendar (its
  * reminder) and every calendar khal no longer has stay as they are.
@@ -86,20 +111,32 @@ export const setup = (settings: Settings, io: SetupIo): Effect.Effect<void, Khal
     if (!io.isTTY)
       return yield* Effect.fail(new InvalidInput({ message: "setup needs an interactive terminal." }));
 
-    const names = parseCalendarNames(yield* execute(settings, calendarsArgs()));
+    // khal reports its calendars in no particular order; ask in a stable one
+    const names = parseCalendarNames(yield* execute(settings, calendarsArgs())).sort();
     if (names.length === 0)
       return yield* Effect.fail(new InvalidInput({ message: "khal reports no calendars." }));
     // the file's own values, so an MCP_KHAL_BIN override is never written back into it
     const existing = yield* loadConfig(settings.configPath);
 
     io.log(`Configuring ${names.length} calendar(s). Config: ${settings.configPath}\n`);
-    const calendars = yield* Effect.acquireUseRelease(
+    const { calendars, defaultCalendar } = yield* Effect.acquireUseRelease(
       Effect.sync(io.openPrompt),
-      (rl) => configure(rl, names, existing.calendars),
+      (rl) =>
+        Effect.gen(function* () {
+          const calendars = yield* configure(rl, names, existing.calendars);
+          // with one calendar that is the default and nothing is written; with several it is required
+          const defaultCalendar =
+            names.length > 1 ? yield* promptDefaultCalendar(rl, names, existing.defaultCalendar) : undefined;
+          return { calendars, defaultCalendar };
+        }),
       (rl) => Effect.sync(() => rl.close()),
     );
 
-    yield* saveConfig(settings.configPath, { ...existing, calendars });
+    yield* saveConfig(settings.configPath, {
+      khal: existing.khal,
+      ...(defaultCalendar === undefined ? {} : { defaultCalendar }),
+      calendars,
+    });
     io.log(`\nSaved ${Object.keys(calendars).length} calendar(s) to ${settings.configPath}`);
   });
 

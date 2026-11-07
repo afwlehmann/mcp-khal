@@ -68,7 +68,7 @@ describe("startupReport", () => {
     khal: "/cfg/khal",
     khalSource: "config",
     configPath: "/c.json",
-    defaultAlarm: "15m",
+    defaultCalendar: "work",
     calendars: { work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } },
     timeoutMs: 5000,
   });
@@ -78,7 +78,7 @@ describe("startupReport", () => {
       configPath: "/c.json",
       khal: { binary: "/cfg/khal", source: "config" },
       timeoutMs: 5000,
-      defaultAlarm: "15m",
+      defaultCalendar: "work",
       calendars: { work: { email: "m***@work.com", alarm: "1d" }, home: { alarm: "none" } },
     });
   });

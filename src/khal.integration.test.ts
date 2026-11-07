@@ -33,7 +33,10 @@ const sandboxEnv = (root: string, path: string): Record<string, string> => ({
   MCP_KHAL_CONFIG: join(root, "config", "mcp-khal.json"),
 });
 
-const khalConfig = (root: string): string => `[calendars]
+const khalConfig = (
+  root: string,
+): string => `# no [default] section: khal has no default_calendar, so nothing can rely on it
+[calendars]
 
 [[work]]
 path = ${join(root, "calendars", "work")}
@@ -42,9 +45,6 @@ type = calendar
 [[home]]
 path = ${join(root, "calendars", "home")}
 type = calendar
-
-[default]
-default_calendar = work
 
 [locale]
 timeformat = %H:%M
@@ -102,8 +102,8 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       join(root, "config", "mcp-khal.json"),
       serializeConfig({
         khal: "khal",
-        // work has its own reminder, home explicitly none, the default applies to everything else
-        defaultAlarm: "1d",
+        // work has its own reminder and takes the events that name no calendar; home has none
+        defaultCalendar: "work",
         calendars: { work: { email: "me@work.com", alarm: "30m" }, home: { alarm: "none" } },
       }),
     );
@@ -290,7 +290,7 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
     });
   });
 
-  describe("default reminders (work: 30m, home: none, everything else: 1d)", () => {
+  describe("reminders per calendar (work: 30m, home: none)", () => {
     const base = { start: "2030-02-04 10:00", end: "11:00" };
     const create = async (args: Record<string, unknown>) => {
       const r = await call("new_event", { ...base, ...args });
@@ -351,9 +351,11 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(triggers(await storedIcs("work", "None series"))).toEqual([]);
     });
 
-    it("uses the default reminder when no calendar is named (khal files it in its default calendar)", async () => {
+    it("uses the default calendar and its reminder when no calendar is named", async () => {
       await create({ summary: "No calendar named" });
-      expect(triggers(await storedIcs("work", "No calendar named"))).toEqual(["-P1D"]);
+      expect(triggers(await storedIcs("work", "No calendar named"))).toEqual(["-PT30M"]);
+      await create({ summary: "No calendar named series", recurrence: { pattern: { kind: "daily" } } });
+      expect(triggers(await storedIcs("work", "No calendar named series"))).toEqual(["-PT30M"]);
     });
 
     it("accepts a reminder of 0m (at the start) through khal new", async () => {
@@ -386,8 +388,21 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
     it("catch a calendar name that khal does not have, and list the ones it has", async () => {
       const e = await runFail(preflight({ ...settings, calendars: { wrok: { email: "me@work.com" } } }));
       expect(e.message).toMatch(
-        /^the config names calendars that khal does not know: wrok \(khal has: (home, work|work, home)\)$/,
+        /^the config names calendars that khal does not know: wrok \(khal has: home, work\)$/,
       );
+    });
+
+    it("require a default calendar because khal has several, and never guess one", async () => {
+      const { defaultCalendar: _unused, ...without } = settings;
+      const e = await runFail(preflight(without));
+      expect(e.message).toBe(
+        'khal has several calendars (home, work): set "defaultCalendar" to the one new events go to when a call names no calendar',
+      );
+    });
+
+    it("catch a default calendar that khal does not have", async () => {
+      const e = await runFail(preflight({ ...settings, defaultCalendar: "wrok" }));
+      expect(e.message).toBe("defaultCalendar 'wrok' does not exist in khal (khal has: home, work)");
     });
 
     it("catch a khal path that does not exist", async () => {
@@ -426,6 +441,7 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       const rl = {
         question: async (q: string) => {
           asked.push(q);
+          if (q.startsWith("Calendar for new events")) return "work";
           return q.includes("'home'") ? "me@home.org" : "me@work.com";
         },
         write: () => {},
@@ -445,10 +461,11 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       );
 
       expect(code).toBe(0);
-      expect(asked).toHaveLength(2);
+      expect(asked).toHaveLength(3);
+      expect(asked[2]).toContain("home, work");
       expect(await runOk(loadConfig(setupConfig))).toEqual({
         khal: "khal",
-        defaultAlarm: "none",
+        defaultCalendar: "work",
         calendars: { home: { email: "me@home.org" }, work: { email: "me@work.com" } },
       });
     });

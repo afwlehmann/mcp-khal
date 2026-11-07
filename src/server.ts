@@ -62,9 +62,14 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
 
   server.tool(
     "new_event",
-    "WRITE OPERATION: this changes the user's calendar. Ask the user for confirmation before calling it (show the summary, time, calendar and any attendees), and never invite attendees without their explicit approval. Create an event. Without `recurrence`: start/end use khal syntax, e.g. start='2026-11-01 10:00', end='11:00' or '1h'; omit end for default duration. With `recurrence` (a series, e.g. every 2nd Wednesday: {pattern:{kind:'monthly_weekday',nth:2,weekday:'wednesday'}}): start must be 'YYYY-MM-DD HH:MM' (first occurrence, must satisfy the pattern) and end 'HH:MM' is required; times are local. With `attendees`, an ICS invite is created (same start/end format as recurrence) with ORGANIZER taken from the calendar->email mapping.",
+    "WRITE OPERATION: this changes the user's calendar. Ask the user for confirmation before calling it (show the summary, time, calendar and any attendees), and never invite attendees without their explicit approval. Create an event. Without `recurrence`: start/end use khal syntax, e.g. start='2026-11-01 10:00', end='11:00' or '1h'; omit end for default duration. With `recurrence` (a series, e.g. every 2nd Wednesday: {pattern:{kind:'monthly_weekday',nth:2,weekday:'wednesday'}}): start must be 'YYYY-MM-DD HH:MM' (first occurrence, must satisfy the pattern) and end 'HH:MM' is required; times are local. With `attendees`, an ICS invite is created (same start/end format as recurrence) with ORGANIZER taken from the calendar's configured email (or `organizer`).",
     {
-      calendar: z.string().optional(),
+      calendar: z
+        .string()
+        .optional()
+        .describe(
+          "Calendar name (see list_calendars). Omit it to use the server's configured default calendar (khal's own default calendar is never used)",
+        ),
       start: z.string(),
       end: z.string().optional(),
       summary: z.string(),
@@ -74,7 +79,7 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
         .string()
         .optional()
         .describe(
-          "Reminder before the start, e.g. '15m', '2h', '1d'. Omit it to get the default configured for the calendar (often none); use 'none' for no reminder at all",
+          "Reminder before the start, e.g. '15m', '2h', '1d'. Omit it to get the reminder configured for the calendar (none if it has none); use 'none' for no reminder at all",
         ),
       recurrence: RecurrenceSpec.optional(),
       attendees: z
@@ -85,7 +90,7 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
         .string()
         .optional()
         .describe(
-          "Override the organizer address; default comes from the calendar mapping (`mcp-khal setup`)",
+          "Override the organizer address; default is the calendar's configured email (`mcp-khal setup`)",
         ),
     },
     (p) => respond(newEvent(settings, p, deps.uid(), deps.now()), plain),

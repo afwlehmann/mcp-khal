@@ -4,7 +4,7 @@ import type { Interface } from "node:readline/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, serializeConfig } from "./config.js";
 import { InvalidInput } from "./errors.js";
-import { configure, promptFor, runSetup, setup } from "./setup.js";
+import { configure, promptDefaultCalendar, promptFor, runSetup, setup } from "./setup.js";
 import { type FakeKhal, fakeKhal, removeDir, runFail, runOk, tempDir } from "./testlib.js";
 
 /** A scripted readline: answers come from the queue, prompts and prefills are recorded. */
@@ -98,40 +98,42 @@ describe("setup", () => {
       path,
       serializeConfig({
         khal: "/opt/khal/bin/khal",
-        defaultAlarm: "none",
         calendars: { work: { email: "old@work.com" } },
       }),
     );
-    const s = scripted(["", ""]);
+    // sorted order: me@home.org, work, then the default calendar
+    const s = scripted(["", "", "work"]);
     const t = io(s);
     await runOk(setup(fake.settings({ configPath: path }), t.io));
     // the configured khal location survives a rerun of setup
     expect(await runOk(loadConfig(path))).toEqual({
       khal: "/opt/khal/bin/khal",
-      defaultAlarm: "none",
+      defaultCalendar: "work",
       calendars: { work: { email: "old@work.com" }, "me@home.org": { email: "me@home.org" } },
     });
-    expect(s.prefills).toEqual(["old@work.com", "me@home.org"]);
+    expect(s.prefills).toEqual(["me@home.org", "old@work.com"]);
+    expect(s.questions).toHaveLength(3);
     expect(t.closed()).toBe(1);
     expect(t.lines.join("\n")).toMatch(/Configuring 2 calendar\(s\)/);
     expect(t.lines.join("\n")).toMatch(/Saved 2 calendar\(s\)/);
   });
 
-  it("keeps the reminders and the default reminder when it fills in addresses", async () => {
+  it("keeps the reminders when it fills in addresses, and the default calendar when it is confirmed", async () => {
     const path = join(dir, "cfg.json");
     await writeFile(
       path,
       serializeConfig({
         khal: "khal",
-        defaultAlarm: "15m",
+        defaultCalendar: "work",
         calendars: { work: { email: "old@work.com", alarm: "1d" }, home: { alarm: "none" } },
       }),
     );
-    // work keeps its address, the second calendar (me@home.org) is new, home is not asked about
-    await runOk(setup(fake.settings({ configPath: path }), io(scripted(["", ""])).io));
+    // work keeps its address, the second calendar (me@home.org) is new, home is not asked about;
+    // the default calendar is prefilled with "work" and confirmed with a blank answer
+    await runOk(setup(fake.settings({ configPath: path }), io(scripted(["", "", ""])).io));
     expect(await runOk(loadConfig(path))).toEqual({
       khal: "khal",
-      defaultAlarm: "15m",
+      defaultCalendar: "work",
       calendars: {
         work: { email: "old@work.com", alarm: "1d" },
         home: { alarm: "none" },
@@ -142,10 +144,41 @@ describe("setup", () => {
 
   it("never writes an MCP_KHAL_BIN override back into the config file", async () => {
     const path = join(dir, "cfg.json");
-    await writeFile(path, serializeConfig({ khal: "khal", defaultAlarm: "none", calendars: {} }));
+    await writeFile(path, serializeConfig({ khal: "khal", calendars: {} }));
     const settings = fake.settings({ configPath: path, khalSource: "MCP_KHAL_BIN" });
-    await runOk(setup(settings, io(scripted(["", ""])).io));
+    await runOk(setup(settings, io(scripted(["", "", "work"])).io));
     expect((await runOk(loadConfig(path))).khal).toBe("khal");
+  });
+
+  it("asks for the default calendar again until the answer is one of khal's calendars", async () => {
+    const path = join(dir, "cfg.json");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const s = scripted(["", "", "nope", "  ", "work"]);
+      await runOk(setup(fake.settings({ configPath: path }), io(s).io));
+      expect(s.questions).toHaveLength(5);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect((await runOk(loadConfig(path))).defaultCalendar).toBe("work");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("asks nothing about the default calendar when khal has a single calendar, and writes none", async () => {
+    const one = await fakeKhal({ stdout: "work\n" });
+    try {
+      const path = join(dir, "cfg.json");
+      await writeFile(path, serializeConfig({ khal: "khal", defaultCalendar: "work", calendars: {} }));
+      const s = scripted(["me@work.com"]);
+      await runOk(setup(one.settings({ configPath: path }), io(s).io));
+      expect(s.questions).toHaveLength(1);
+      expect(await runOk(loadConfig(path))).toEqual({
+        khal: "khal",
+        calendars: { work: { email: "me@work.com" } },
+      });
+    } finally {
+      await one.cleanup();
+    }
   });
 
   it("refuses to run without a terminal", async () => {
@@ -200,7 +233,6 @@ describe("runSetup", () => {
     expect(code).toBe(0);
     expect(await runOk(loadConfig(join(dir, "cfg.json")))).toEqual({
       khal: "khal",
-      defaultAlarm: "none",
       calendars: { work: { email: "me@work.com" } },
     });
     expect(lines).toHaveLength(2);
@@ -228,6 +260,41 @@ describe("runSetup", () => {
     );
     expect(code).toBe(1);
     expect(errors[0]).toMatch(/^InvalidInput:/);
+  });
+});
+
+describe("promptDefaultCalendar", () => {
+  const names = ["home", "work"];
+
+  it("prefills the configured default calendar and keeps it on a blank answer", async () => {
+    const s = scripted([""]);
+    expect(await runOk(promptDefaultCalendar(s.rl, names, "home"))).toBe("home");
+    expect(s.prefills).toEqual(["home"]);
+  });
+
+  it("lists the calendars to choose from and trims the answer", async () => {
+    const s = scripted(["  work "]);
+    expect(await runOk(promptDefaultCalendar(s.rl, names, undefined))).toBe("work");
+    expect(s.questions[0]).toContain("home, work");
+    expect(s.prefills).toEqual([]);
+  });
+
+  it("does not prefill a configured calendar that khal no longer has", async () => {
+    const s = scripted(["home"]);
+    expect(await runOk(promptDefaultCalendar(s.rl, names, "gone"))).toBe("home");
+    expect(s.prefills).toEqual([]);
+  });
+
+  it("is required: a blank answer without a prefilled value asks again", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const s = scripted(["", "nope", "home"]);
+      expect(await runOk(promptDefaultCalendar(s.rl, names, undefined))).toBe("home");
+      expect(s.questions).toHaveLength(3);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

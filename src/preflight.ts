@@ -10,6 +10,9 @@ import { collect, problem, toInvalidInput, type Validated, valid } from "./valid
 export const unknownCalendars = (configured: readonly string[], known: readonly string[]): string[] =>
   configured.filter((name) => !known.includes(name));
 
+/** khal reports its calendars in no particular order; anything shown to the user is sorted. */
+const sorted = (names: readonly string[]): string[] => [...names].sort();
+
 /** Runs an effect as a validation: a failure becomes one problem instead of aborting the checks. */
 const attempt = <A>(
   eff: Effect.Effect<A, KhalError>,
@@ -17,22 +20,53 @@ const attempt = <A>(
 ): Effect.Effect<Validated<A>> =>
   Effect.match(eff, { onFailure: (e) => problem(describe(e)), onSuccess: (a) => valid(a) });
 
-const checkCalendars = (settings: Settings, known: string): Validated<void> => {
-  const names = parseCalendarNames(known);
-  const unknown = unknownCalendars(Object.keys(settings.calendars), names);
-  return unknown.length === 0
-    ? valid(undefined)
-    : problem(
-        `the config names calendars that khal does not know: ${unknown.join(", ")} (khal has: ${names.join(", ") || "none"})`,
-      );
+/**
+ * The calendars of the config against the calendars khal has. Returns the calendar new events go
+ * to when a call names none: the configured `defaultCalendar`, which has to exist, or the only
+ * calendar khal has. With several calendars the default must be configured: asking khal for its
+ * own default by name is not enough, so nothing is guessed.
+ */
+export const checkCalendars = (settings: Settings, names: readonly string[]): Validated<string> => {
+  const has = sorted(names).join(", ") || "none";
+  const unknown = sorted(unknownCalendars(Object.keys(settings.calendars), names));
+  const { defaultCalendar } = settings;
+  const [only] = names;
+
+  const configured: Validated<undefined> =
+    unknown.length === 0
+      ? valid(undefined)
+      : problem(
+          `the config names calendars that khal does not know: ${unknown.join(", ")} (khal has: ${has})`,
+        );
+
+  const fallback: Validated<string> =
+    only !== undefined && names.length === 1
+      ? valid(only)
+      : problem(
+          names.length === 0
+            ? "khal has no calendars: there is nowhere to create events"
+            : `khal has several calendars (${has}): set "defaultCalendar" to the one new events go to when a call names no calendar`,
+        );
+
+  const effective: Validated<string> =
+    defaultCalendar === undefined
+      ? fallback
+      : names.includes(defaultCalendar)
+        ? valid(defaultCalendar)
+        : problem(`defaultCalendar '${defaultCalendar}' does not exist in khal (khal has: ${has})`);
+
+  return Result.map(collect({ configured, effective }), (v) => v.effective);
 };
 
 /**
  * Checks at server start that what the configuration says matches the machine. All checks run and
- * all their problems are reported together. The calendar check needs a working khal, so it is
+ * all their problems are reported together. The calendar checks need a working khal, so they are
  * skipped (not repeated as a second problem) when khal itself cannot be run.
+ *
+ * Returns the settings with the default calendar filled in, so the rest of the server always
+ * knows which calendar a new event goes to.
  */
-export const preflight = (settings: Settings): Effect.Effect<void, KhalError> =>
+export const preflight = (settings: Settings): Effect.Effect<Settings, KhalError> =>
   Effect.gen(function* () {
     const configFile: Validated<void> =
       settings.configSource === "MCP_KHAL_CONFIG" && !settings.configFound
@@ -52,18 +86,22 @@ export const preflight = (settings: Settings): Effect.Effect<void, KhalError> =>
       (e) => `khal (${settings.khal}, from ${settings.khalSource}) cannot be run: ${e._tag}: ${e.message}`,
     );
 
-    const calendars: Validated<void> = yield* Result.isSuccess(khalRuns)
+    const calendars: Validated<string | undefined> = yield* Result.isSuccess(khalRuns)
       ? Effect.map(
           attempt(
             execute(settings, calendarsArgs()),
             (e) => `khal cannot list its calendars: ${e._tag}: ${e.message}`,
           ),
-          (listed) => Result.flatMap(listed, (out) => checkCalendars(settings, out)),
+          (listed) => Result.flatMap(listed, (out) => checkCalendars(settings, parseCalendarNames(out))),
         )
       : Effect.succeed(valid(undefined));
 
     return yield* Result.match(collect({ configFile, tmpDir, khalRuns, calendars }), {
       onFailure: (problems) => Effect.fail(toInvalidInput(problems)),
-      onSuccess: () => Effect.void,
+      onSuccess: (v) =>
+        Effect.succeed<Settings>({
+          ...settings,
+          ...(v.calendars === undefined ? {} : { defaultCalendar: v.calendars }),
+        }),
     });
   });

@@ -14,6 +14,9 @@ An MCP server that lets an assistant read and create events in your [khal](https
 
 `new_event` is the only tool that writes. Its description tells the calling agent to ask the user for confirmation first, and never to invite attendees without explicit approval. The other tools are read-only and also work on read-only calendars.
 
+### Default calendar
+When a `new_event` call names no `calendar`, the event goes to `defaultCalendar` from the config. It is required when khal has several calendars and optional when it has exactly one (that one is then used). The server checks at startup that khal has the calendar, and it always passes the calendar to khal explicitly: khal's own `default_calendar` is never relied on (without one, `khal new` fails at once with exit code 2; it does not prompt). The order in which khal lists calendars is irrelevant; calendar names are shown sorted.
+
 ### Recurring events
 `recurrence` is `{ pattern, ending? }`. For a series, `start` must be `YYYY-MM-DD HH:MM` (the first occurrence, which must match the pattern), `end` is a required `HH:MM`, and times are local.
 
@@ -29,18 +32,17 @@ An MCP server that lets an assistant read and create events in your [khal](https
 Example, every 2nd Wednesday of the month: `{ "pattern": { "kind": "monthly_weekday", "nth": 2, "weekday": "wednesday" } }`.
 
 ### Invites
-With `attendees` (email addresses), `new_event` imports an ICS with `ORGANIZER` and one `ATTENDEE` per address. Like a series, `start` must be `YYYY-MM-DD HH:MM` and `end` an `HH:MM`. The organizer is `organizer` if given, else the calendar's entry from the setup mapping, else the calendar name if it is an email address; otherwise the call fails. khal does not send the invites; that is left to your sync/mail tooling.
+With `attendees` (email addresses), `new_event` imports an ICS with `ORGANIZER` and one `ATTENDEE` per address. Like a series, `start` must be `YYYY-MM-DD HH:MM` and `end` an `HH:MM`. The organizer is `organizer` if given, else the calendar's `email` from the config (`calendars.<name>.email`), else the calendar name if it is an email address; otherwise the call fails. khal does not send the invites; that is left to your sync/mail tooling.
 
 ### Reminders
 `new_event` can set one reminder per event, given as `<n>m`, `<n>h` or `<n>d` (minutes, hours or days before the start, n from 0 to 9999), for example `15m`, `2h` or `1d`. `0m` means "at the start". `none` means no reminder.
 
 If `alarm` is not given, the reminder comes from the configuration (see [Configuration](#configuration)). In order of precedence:
 1. the `alarm` of the call (`none` switches a configured reminder off for this event),
-2. the calendar's entry in `calendarAlarms`,
-3. `defaultAlarm`,
-4. no reminder.
+2. the calendar's own `alarm` (`calendars.<name>.alarm`),
+3. no reminder.
 
-When the call names no `calendar`, khal files the event in its own default calendar, but mcp-khal cannot know which one that is, so `defaultAlarm` applies. Name the calendar if it should get its own reminder.
+There is no global default reminder: a reminder belongs to a calendar. A call that names no `calendar` goes to the [default calendar](#default-calendar) and gets that calendar's reminder.
 
 Why this exists: a reminder is part of the event itself (a `VALARM`), and khal and vdirsyncer sync it unchanged. A server's own "default notifications" are not reliably applied to events that arrive without one, so setting a default here makes the reminder independent of the server. Plain events are created with `khal new -m`; series and invites are imported as ICS with a `VALARM`. khal stores a reminder of `0m` as `P0D`.
 
@@ -57,7 +59,7 @@ MCP client config:
 ```
 npm run setup        # or: node dist/cli.js setup
 ```
-Lists your khal calendars and asks for your email address on each. The mapping (calendar name → address) is saved to the config file (see below). Existing entries are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. Rerun any time; the `khal` setting of the file is preserved.
+Lists your khal calendars and asks for your email address on each; the answer is saved as that calendar's `email` in the config file (see below). Existing addresses are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. When khal has several calendars it then asks for the calendar new events go to (`defaultCalendar`, prefilled with the configured one; it must be one of them). Rerun any time: everything else in the file (`khal`, the reminders of the calendars, calendars khal no longer has) is preserved.
 
 ### Configuration
 The server reads its environment and one JSON config file once, at startup. Nothing is re-read while it runs, so restart it after changing either.
@@ -67,9 +69,12 @@ The config file is `$MCP_KHAL_CONFIG`, else `$XDG_CONFIG_HOME/mcp-khal.json`, el
 ```json
 {
   "khal": "khal",
-  "calendarEmails": { "work": "me@example.com", "private": "me@example.org" },
-  "defaultAlarm": "15m",
-  "calendarAlarms": { "work": "1d", "private": "none", "school": "90m" }
+  "defaultCalendar": "work",
+  "calendars": {
+    "work": { "email": "me@example.com", "alarm": "1d" },
+    "private": { "email": "me@example.org", "alarm": "none" },
+    "school": { "alarm": "90m" }
+  }
 }
 ```
 
@@ -78,15 +83,23 @@ A ready-to-copy version is installed with the package at `share/doc/mcp-khal/exa
 | Key | Default | Meaning |
 |---|---|---|
 | `khal` | `"khal"` | The khal executable: a command name looked up on `PATH`, or an absolute path such as `/nix/store/…/bin/khal`. |
-| `calendarEmails` | `{ }` | Calendar name → your address on it, used as the organizer of invites. Written by `mcp-khal setup`. |
-| `defaultAlarm` | `"none"` | Reminder for new events that name none and whose calendar has no entry in `calendarAlarms`. See [Reminders](#reminders). |
-| `calendarAlarms` | `{ }` | Calendar name → reminder for new events on that calendar, overriding `defaultAlarm`. `none` means no reminder on that calendar. |
+| `defaultCalendar` | unset | The calendar `new_event` uses when a call names none, by the name khal reports. Required when khal has several calendars, optional with one. Checked against khal at startup. See [Default calendar](#default-calendar). |
+| `calendars` | `{ }` | One object per calendar, by the name khal reports (`khal printcalendars`). |
+
+Each entry of `calendars` has two optional fields and nothing else (a typo such as `emial` is an error):
+
+| Field | Meaning |
+|---|---|
+| `email` | Your address on this calendar: the organizer of invites created there. Written by `mcp-khal setup`. |
+| `alarm` | Reminder for new events on this calendar; `none` or unset means no reminder. |
+
+Migrating from v1.2.0 (breaking): `calendarEmails` and `calendarAlarms` moved into the per-calendar objects (`"calendarEmails": { "work": "a@b.c" }` is now `"calendars": { "work": { "email": "a@b.c" } }`, likewise `alarm`), and `defaultAlarm` is gone: put an `alarm` on each calendar and name the calendar for events without one in `defaultCalendar`. A config that still uses a retired key is refused at startup with a message that says so.
 
 Reminders are `<n>m`, `<n>h` or `<n>d` (n from 0 to 9999; lowercase unit, no spaces inside) or `none`. They are validated when the config is read (see [Validation at startup](#validation-at-startup)), and an invalid value stops the server at startup naming the key and the value. These are rejected: `15` (no unit), `-5m` (negative), `1w`, `1.5d`, `5 m`, `5M`, `None`, `1d2h`, an empty string and anything that is not a string.
 
 | Environment variable | Meaning |
 |---|---|
-| `MCP_KHAL_BIN` | Overrides `khal` from the config file, for example `MCP_KHAL_BIN=/opt/khal/bin/khal`. An empty value is ignored. |
+| `MCP_KHAL_BIN` | Overrides `khal` from the config file, for example `MCP_KHAL_BIN=/opt/khal/bin/khal`. Same rule as `khal`: an absolute path or a bare command name, never a relative path. An empty value is ignored. |
 | `MCP_KHAL_CONFIG` | Path of the config file. |
 | `XDG_CONFIG_HOME` | Base directory of the config file when `MCP_KHAL_CONFIG` is unset. |
 
@@ -100,22 +113,23 @@ The server checks its configuration when it starts and refuses to start (exit co
 ```
 mcp-khal cannot start: InvalidInput: 3 problems:
 - MCP_KHAL_BIN must not start with '~', which is not expanded; use an absolute path (got ~/khal)
-- defaultAlarm must be a reminder like 30m, 2h or 1d (minutes, hours, days before the start), or 'none', got "soon"
-- calendarEmails entry 'work' is not a valid email address
+- defaultCalendar must be a calendar name (a string), got 42
+- calendars.work.email is not a valid email address, got "nope"
 ```
 
 All strings from the environment and the config file are trimmed before they are checked, so `" 15m "` is `15m`. Whitespace inside a value is not removed (`5 m` is invalid), and an environment variable that is empty or only whitespace counts as unset.
 
 First, the values themselves:
-- **JSON and keys:** the file must be valid JSON with only the keys above; a typo such as `calendarEmail` is an error, not silently ignored.
-- **`khal` and `MCP_KHAL_BIN`:** a bare command name (looked up on `PATH`) or an absolute path. Relative paths (`./khal`, `bin/khal`), `~` (never expanded), names with spaces or a leading `-`, and control characters are rejected.
+- **JSON and keys:** the file must be valid JSON with only the keys above, and every calendar object only `email` and `alarm`; a typo such as `emial` is an error, not silently ignored.
+- **`khal` in the config and `MCP_KHAL_BIN`:** a bare command name (looked up on `PATH`) or an absolute path, never a relative path. Relative paths (`./khal`, `bin/khal`, `../khal`), `~` (never expanded), names with spaces or a leading `-`, and control characters are rejected.
 - **`MCP_KHAL_CONFIG` and `XDG_CONFIG_HOME`:** absolute paths.
-- **Calendar names** (keys of `calendarEmails` and `calendarAlarms`): not empty, no control characters, and unique after trimming.
-- **Addresses** must look like email addresses, **reminders** like the table above.
+- **Calendar names** (the keys of `calendars` and `defaultCalendar`): not empty, no control characters, and unique after trimming.
+- **Addresses** must look like email addresses, **reminders** like the section above.
 
 Then the values against the machine:
 - the khal executable runs (`khal --version`) and can list its calendars,
-- every calendar named in `calendarEmails` or `calendarAlarms` exists in khal (the message lists the calendars khal has, which catches typos),
+- every calendar named in `calendars` exists in khal (the message lists the calendars khal has, sorted, which catches typos),
+- `defaultCalendar` exists in khal, and is set when khal has several calendars (with exactly one it is filled in),
 - the temporary directory exists and is writable,
 - a config file named explicitly by `MCP_KHAL_CONFIG` exists (the default location may be missing: that means the defaults).
 
@@ -146,16 +160,19 @@ inputs.mcp-khal.url = "github:<you>/mcp-khal";
 
   programs.mcp-khal = {
     enable = true;
-    # calendar name -> your email address on that calendar
-    calendarEmails = {
-      work = "me@example.com";
-      private = "me@example.org";
-    };
-    # reminders for new events: 30m, 2h, 1d or none
-    defaultAlarm = "15m";
-    calendarAlarms = {
-      work = "1d";
-      private = "none";
+    # where new events go when a call names no calendar (required with several calendars)
+    defaultCalendar = "work";
+    # one object per calendar, by the name khal reports; every field is optional
+    calendars = {
+      work = {
+        email = "me@example.com";
+        alarm = "1d";
+      };
+      private = {
+        email = "me@example.org";
+        alarm = "none";
+      };
+      school.alarm = "90m";
     };
   };
 }
@@ -168,12 +185,13 @@ Options:
 | `programs.mcp-khal.enable` | bool | `false` | Install `mcp-khal` into `home.packages`. |
 | `programs.mcp-khal.package` | package | the flake's `default` package for your system | Override to use your own build or an overlay. |
 | `programs.mcp-khal.khalPackage` | package | `pkgs.khal` | The khal that mcp-khal runs. Its path is written to the `khal` key of the config file, so the server does not depend on `PATH`. |
-| `programs.mcp-khal.calendarEmails` | attrs of email address | `{ }` | Calendar name → your address on it. Used as the organizer of invites (see [Invites](#invites)). Values are validated with the same rule as the server, so a typo fails at `home-manager switch` instead of breaking invites later. |
-| `programs.mcp-khal.defaultAlarm` | reminder | `"none"` | Reminder for new events that name none and whose calendar has no entry in `calendarAlarms`: `30m`, `2h`, `1d` (minutes, hours, days before the start) or `none`. Validated like in the server. |
-| `programs.mcp-khal.calendarAlarms` | attrs of reminder | `{ }` | Calendar name → reminder, overriding `defaultAlarm`; `none` disables the reminder on that calendar. See [Reminders](#reminders). |
+| `programs.mcp-khal.defaultCalendar` | null or non-empty string | `null` | The calendar new events go to when a call names none, by the name khal reports. Required when khal has several calendars; written to the config only when set. See [Default calendar](#default-calendar). |
+| `programs.mcp-khal.calendars.<name>` | submodule | `{ }` | Settings of one calendar, by the name khal reports. A typed object with the two options below; an unknown option (a typo such as `emial`) is an evaluation error. |
+| `programs.mcp-khal.calendars.<name>.email` | null or email address | `null` | Your address on the calendar: the organizer of invites (see [Invites](#invites)). Validated with the same rule as the server, so a typo fails at `home-manager switch` instead of breaking invites later. |
+| `programs.mcp-khal.calendars.<name>.alarm` | null or reminder | `null` | Reminder for new events on the calendar, `none` or unset means no reminder. See [Reminders](#reminders). |
 
 What the module does:
-- It writes `~/.config/mcp-khal.json` through `xdg.configFile` with `khal` (the path of `khalPackage`), `calendarEmails`, `defaultAlarm` and `calendarAlarms`; see [Configuration](#configuration). The package also ships an example config under `share/doc/mcp-khal/examples/`. This replaces the interactive `mcp-khal setup`. The file lives in the Nix store as a read-only symlink, so change the options instead of rerunning `setup`. `MCP_KHAL_BIN` in the environment of the MCP client still overrides the khal path.
+- It writes `~/.config/mcp-khal.json` through `xdg.configFile` with `khal` (the path of `khalPackage`), `defaultCalendar` and `calendars` (options that are not set stay out of the file); see [Configuration](#configuration). The package also ships an example config under `share/doc/mcp-khal/examples/`. This replaces the interactive `mcp-khal setup`. The file lives in the Nix store as a read-only symlink, so change the options instead of rerunning `setup`. `MCP_KHAL_BIN` in the environment of the MCP client still overrides the khal path.
 - Calendar names must match the names khal reports (`khal printcalendars`), not necessarily the names of Home Manager accounts.
 
 ### Wiring it into an MCP client
@@ -205,8 +223,11 @@ After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set 
 | Job | What it does |
 |---|---|
 | `nix` (Linux and macOS) | `nix flake check` (nixfmt, biome, ripsecrets, unit tests with coverage, Home Manager module check), `nix build`, and a smoke test of the binary. |
+| `integration` (Linux and macOS) | The [integration tests](#integration-tests) against the real khal, run in `nix develop` (`npm ci`, then `npm run test:integration`). A job of its own, so its result is visible separately from the build and the unit tests. |
 | `npm` | `npm ci`, `npm run build`, `npm test` (typecheck, vitest, coverage thresholds) without Nix. |
 | `conventional commits` | Pull requests only: `convco check` over the commits of the PR. |
 | `release` | On a tag `vX.Y.Z`: checks the tag equals the `package.json` version, runs `npm pack` and creates a GitHub release with generated notes and the tarball attached. Tags with a suffix such as `v1.2.0-rc.1` become pre-releases. |
 
-To release: bump `version` (`npm version <major|minor|patch> --no-git-tag-version`, plus the version string in `src/server.ts`), update `npmDepsHash` in `nix/package.nix` (it also changes with the lockfile's version), commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix` and `npm` jobs succeed.
+Caching: the Nix jobs restore and save the Nix store with [`nix-community/cache-nix-action`](https://github.com/nix-community/cache-nix-action) (one cache per job and OS, keyed on `flake.lock`, `flake.nix`, `nix/` and, for the build, `package-lock.json`, with a prefix fallback and garbage collection above 2 GB), the `npm` and `release` jobs cache the npm downloads through `actions/setup-node`, and the `integration` job caches `~/.npm` with `actions/cache`.
+
+To release: bump `version` (`npm version <major|minor|patch> --no-git-tag-version`, plus the version string in `src/server.ts`), update `npmDepsHash` in `nix/package.nix` (it also changes with the lockfile's version), commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix`, `integration` and `npm` jobs succeed.

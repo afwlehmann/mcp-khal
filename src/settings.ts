@@ -23,9 +23,9 @@ export interface Settings {
   readonly khal: string;
   /** where `khal` came from: the environment overrides the config file */
   readonly khalSource: "MCP_KHAL_BIN" | "config";
-  /** reminder for new events without an explicit `alarm`: `15m`, `2h`, `1d` or `none` */
-  readonly defaultAlarm: string;
-  /** per calendar: the user's address there and the reminder that overrides `defaultAlarm` */
+  /** the calendar `new_event` uses when the call names none; verified against khal at startup */
+  readonly defaultCalendar?: string;
+  /** per calendar: the user's address there and the reminder for new events */
   readonly calendars: Calendars;
   readonly configPath: string;
   /** which variable (or the default) decided `configPath` */
@@ -61,7 +61,7 @@ export const buildSettings = (input: {
   return {
     khal: binary,
     khalSource: source,
-    defaultAlarm: input.config.defaultAlarm,
+    ...(input.config.defaultCalendar === undefined ? {} : { defaultCalendar: input.config.defaultCalendar }),
     calendars: input.config.calendars,
     configPath: input.configPath,
     configSource: input.configSource ?? "default",

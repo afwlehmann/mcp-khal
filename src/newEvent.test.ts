@@ -24,10 +24,10 @@ describe("newEvent reminders", () => {
   });
 
   /** `alarms` is calendar name -> that calendar's own reminder */
-  const settingsWith = (defaultAlarm: string, alarms: Record<string, string> = {}) =>
+  const settingsWith = (alarms: Record<string, string> = {}, defaultCalendar?: string) =>
     fake.settings({
-      defaultAlarm,
       calendars: Object.fromEntries(Object.entries(alarms).map(([name, alarm]) => [name, { alarm }])),
+      ...(defaultCalendar === undefined ? {} : { defaultCalendar }),
     });
 
   /** the `-m` value of the single khal call, or undefined when there is none */
@@ -48,64 +48,58 @@ describe("newEvent reminders", () => {
     ((await fake.imported()) ?? "").split("\r\n").filter((l) => l.startsWith("TRIGGER"));
 
   describe("khal new", () => {
-    it("adds no reminder when nothing is configured", async () => {
-      await runOk(newEvent(settingsWith("none"), { ...plain, calendar: "work" }, UID, NOW));
+    it("adds no reminder when the calendar has none configured", async () => {
+      await runOk(newEvent(settingsWith(), { ...plain, calendar: "work" }, UID, NOW));
       expect(await alarmArg()).toBeUndefined();
     });
 
-    it("applies the calendar's reminder, then the default, then none", async () => {
-      const settings = settingsWith("15m", { work: "1d", home: "none" });
-      await runOk(newEvent(settings, { ...plain, calendar: "work" }, UID, NOW));
+    it("applies the reminder of the calendar the event goes to", async () => {
+      await runOk(
+        newEvent(settingsWith({ work: "1d", home: "none" }), { ...plain, calendar: "work" }, UID, NOW),
+      );
       expect(await alarmArg()).toBe("1d");
     });
 
-    it("falls back to the default for calendars without their own setting", async () => {
-      await runOk(newEvent(settingsWith("15m", { work: "1d" }), { ...plain, calendar: "other" }, UID, NOW));
-      expect(await alarmArg()).toBe("15m");
-    });
-
-    it("falls back to the default when no calendar is given", async () => {
-      await runOk(newEvent(settingsWith("90m", { work: "1d" }), plain, UID, NOW));
-      expect(await alarmArg()).toBe("90m");
-    });
-
-    it("lets a calendar opt out of the default with 'none'", async () => {
-      await runOk(newEvent(settingsWith("15m", { home: "none" }), { ...plain, calendar: "home" }, UID, NOW));
+    it("adds no reminder on a calendar configured with 'none', or on one that is not configured", async () => {
+      await runOk(newEvent(settingsWith({ home: "none" }), { ...plain, calendar: "home" }, UID, NOW));
       expect(await alarmArg()).toBeUndefined();
+      await runOk(newEvent(settingsWith({ work: "1d" }), { ...plain, calendar: "other" }, UID, NOW));
+      const calls = await fake.calls();
+      expect(calls[1]?.includes("-m")).toBe(false);
     });
 
     it("prefers an explicit alarm over the configuration", async () => {
       await runOk(
-        newEvent(settingsWith("15m", { work: "1d" }), { ...plain, calendar: "work", alarm: "5m" }, UID, NOW),
+        newEvent(settingsWith({ work: "1d" }), { ...plain, calendar: "work", alarm: "5m" }, UID, NOW),
       );
       expect(await alarmArg()).toBe("5m");
     });
 
     it("lets an explicit 'none' suppress a configured reminder", async () => {
       await runOk(
-        newEvent(
-          settingsWith("15m", { work: "1d" }),
-          { ...plain, calendar: "work", alarm: "none" },
-          UID,
-          NOW,
-        ),
+        newEvent(settingsWith({ work: "1d" }), { ...plain, calendar: "work", alarm: "none" }, UID, NOW),
       );
       expect(await alarmArg()).toBeUndefined();
+    });
+
+    it("applies the reminder of the default calendar when the call names no calendar", async () => {
+      await runOk(newEvent(settingsWith({ work: "90m", home: "1d" }, "work"), plain, UID, NOW));
+      expect(await alarmArg()).toBe("90m");
     });
   });
 
   describe("imported ICS (series and invites)", () => {
     it("writes the calendar's reminder as a VALARM trigger, in days and in minutes", async () => {
-      await runOk(newEvent(settingsWith("none", { work: "2d" }), { ...series, calendar: "work" }, UID, NOW));
+      await runOk(newEvent(settingsWith({ work: "2d" }), { ...series, calendar: "work" }, UID, NOW));
       expect(await triggers()).toEqual(["TRIGGER:-P2D"]);
-      await runOk(newEvent(settingsWith("none", { work: "45m" }), { ...series, calendar: "work" }, UID, NOW));
+      await runOk(newEvent(settingsWith({ work: "45m" }), { ...series, calendar: "work" }, UID, NOW));
       expect(await triggers()).toEqual(["TRIGGER:-PT45M"]);
     });
 
-    it("writes the default reminder for invites too", async () => {
+    it("writes the calendar's reminder for invites too", async () => {
       await runOk(
         newEvent(
-          fake.settings({ defaultAlarm: "30m", calendars: { work: { email: "me@work.com" } } }),
+          fake.settings({ calendars: { work: { email: "me@work.com", alarm: "30m" } } }),
           {
             calendar: "work",
             start: "2030-01-17 10:00",
@@ -120,21 +114,84 @@ describe("newEvent reminders", () => {
       expect(await triggers()).toEqual(["TRIGGER:-PT30M"]);
     });
 
-    it("writes no VALARM for 'none', configured or explicit", async () => {
+    it("writes no VALARM for 'none', configured or explicit, nor for a calendar without a reminder", async () => {
+      await runOk(newEvent(settingsWith({ work: "none" }), { ...series, calendar: "work" }, UID, NOW));
+      expect(await triggers()).toEqual([]);
       await runOk(
-        newEvent(settingsWith("none", { work: "none" }), { ...series, calendar: "work" }, UID, NOW),
+        newEvent(settingsWith({ work: "15m" }), { ...series, calendar: "work", alarm: "none" }, UID, NOW),
       );
       expect(await triggers()).toEqual([]);
-      await runOk(newEvent(settingsWith("15m"), { ...series, calendar: "work", alarm: "none" }, UID, NOW));
+      await runOk(newEvent(settingsWith(), { ...series, calendar: "work" }, UID, NOW));
       expect(await triggers()).toEqual([]);
     });
 
     it("lets an explicit alarm override the configuration", async () => {
       await runOk(
-        newEvent(settingsWith("15m", { work: "1d" }), { ...series, calendar: "work", alarm: "2h" }, UID, NOW),
+        newEvent(settingsWith({ work: "1d" }), { ...series, calendar: "work", alarm: "2h" }, UID, NOW),
       );
       expect(await triggers()).toEqual(["TRIGGER:-PT2H"]);
     });
+
+    it("applies the reminder of the default calendar when the call names no calendar", async () => {
+      await runOk(newEvent(settingsWith({ work: "3d" }, "work"), series, UID, NOW));
+      expect(await triggers()).toEqual(["TRIGGER:-P3D"]);
+    });
+  });
+});
+
+describe("newEvent default calendar", () => {
+  let fake: FakeKhal;
+
+  beforeEach(async () => {
+    fake = await fakeKhal({ stdout: "done\n" });
+  });
+  afterEach(async () => {
+    await fake.cleanup();
+  });
+
+  const calendars = { work: { email: "me@work.com" }, home: { email: "me@home.org" } };
+  const settings = (defaultCalendar?: string) =>
+    fake.settings({ calendars, ...(defaultCalendar === undefined ? {} : { defaultCalendar }) });
+  const plain = { start: "2030-01-15 12:00", end: "13:00", summary: "Lunch" };
+  const invite = {
+    start: "2030-01-17 10:00",
+    end: "11:00",
+    summary: "Review",
+    attendees: ["you@x.com"],
+  };
+
+  it("files a plain event in the default calendar when the call names none, telling khal explicitly", async () => {
+    await runOk(newEvent(settings("work"), plain, UID, NOW));
+    expect(await fake.calls()).toEqual([
+      ["new", "-a", "work", "--", "2030-01-15", "12:00", "13:00", "Lunch"],
+    ]);
+  });
+
+  it("imports a series or an invite into the default calendar, with that calendar's organizer", async () => {
+    await runOk(newEvent(settings("home"), invite, UID, NOW));
+    const [call] = await fake.calls();
+    expect(call?.slice(0, 3)).toEqual(["import", "-a", "home"]);
+    expect(unfold((await fake.imported()) ?? "")).toMatch(/ORGANIZER:mailto:me@home\.org/);
+  });
+
+  it("lets the calendar of the call win over the default calendar", async () => {
+    await runOk(newEvent(settings("work"), { ...plain, calendar: " home " }, UID, NOW));
+    expect((await fake.calls())[0]?.slice(0, 3)).toEqual(["new", "-a", "home"]);
+  });
+
+  it("refuses to create an event when there is no calendar at all: khal's own default is never relied on", async () => {
+    for (const input of [plain, invite, { ...plain, recurrence: { pattern: { kind: "daily" } } } as const]) {
+      const e = await runFail(newEvent(settings(), input, UID, NOW));
+      expect(e).toBeInstanceOf(InvalidInput);
+      expect(e.message).toMatch(/no calendar given and no default calendar is configured/);
+    }
+    expect(await fake.calls()).toEqual([]);
+  });
+
+  it("does not replace a blank calendar of the call by the default calendar", async () => {
+    const e = await runFail(newEvent(settings("work"), { ...plain, calendar: "   " }, UID, NOW));
+    expect(e).toBeInstanceOf(InvalidInput);
+    expect(await fake.calls()).toEqual([]);
   });
 });
 
