@@ -28,33 +28,78 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-flake-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**', 'package-lock.json') }}
+          restore-prefixes-first-match: nix-flake-${{ runner.os }}-
+          gc-max-store-size: 2G
       - name: Flake checks (hooks, unit tests, module check)
         run: nix flake check --print-build-logs
       - name: Build the package
         run: nix build .#default --print-build-logs
-      - name: Integration tests (real khal from the dev shell, temporary directories only)
-        run: |
-          nix develop --command npm ci --ignore-scripts
-          nix develop --command npm run test:integration
       - name: Smoke test the built binary
         run: |
           rc=0
           ./result/bin/mcp-khal --bogus || rc=$?
           test "$rc" -eq 2
 
-  # Fast feedback without Nix: plain npm build, typecheck and tests.
+  # The tools against the real khal from the dev shell (npm run test:integration). A job of its
+  # own: it needs the dev shell and the npm dependencies, and its failures should not be buried
+  # in the build and unit test job. Everything runs in temporary directories only.
+  integration:
+    name: integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-develop-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**') }}
+          restore-prefixes-first-match: nix-develop-${{ runner.os }}-
+          gc-max-store-size: 2G
+      - name: Cache the npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - name: Install the npm dependencies inside the dev shell
+        run: nix develop --command npm ci --ignore-scripts
+      - name: Integration tests (real khal, temporary directories only)
+        run: nix develop --command npm run test:integration
+
+  # npm build, typecheck and tests, in the dev shell like everything else.
   npm:
     name: npm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: cachix/install-nix-action@v31
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-develop-npm-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**') }}
+          restore-prefixes-first-match: nix-develop-npm-${{ runner.os }}-
+          gc-max-store-size: 2G
+      - name: Cache the npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - run: nix develop --command npm ci --ignore-scripts
+      - run: nix develop --command npm run build
+      - run: nix develop --command npm test
 
   commits:
     name: conventional commits
@@ -67,33 +112,50 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-convco-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-convco-${{ runner.os }}-
+          gc-max-store-size: 1G
       - name: Check commit messages
-        run: nix run nixpkgs#convco -- check "origin/${{ github.base_ref }}..HEAD"
+        run: nix develop --command convco check "origin/${{ github.base_ref }}..HEAD"
 
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [nix, npm]
+    needs: [nix, npm, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: cachix/install-nix-action@v31
         with:
-          node-version: 24
-          cache: npm
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-develop-release-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**') }}
+          restore-prefixes-first-match: nix-develop-release-${{ runner.os }}-
+          gc-max-store-size: 2G
+      - name: Cache the npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       - name: Tag must match package.json
         run: |
-          version="$(node -p "require('./package.json').version")"
+          version="$(nix develop --command node -p "require('./package.json').version")"
           if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
             echo "tag ${GITHUB_REF_NAME} does not match package.json version ${version}" >&2
             exit 1
           fi
-      - run: npm ci
-      - run: npm run build
+      - run: nix develop --command npm ci --ignore-scripts
+      - run: nix develop --command npm run build
       - name: Pack
-        run: npm pack
+        run: nix develop --command npm pack
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

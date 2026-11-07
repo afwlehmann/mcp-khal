@@ -224,10 +224,10 @@ After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set 
 |---|---|
 | `nix` (Linux and macOS) | `nix flake check` (nixfmt, biome, ripsecrets, unit tests with coverage, Home Manager module check), `nix build`, and a smoke test of the binary. |
 | `integration` (Linux and macOS) | The [integration tests](#integration-tests) against the real khal, run in `nix develop` (`npm ci`, then `npm run test:integration`). A job of its own, so its result is visible separately from the build and the unit tests. |
-| `npm` | `npm ci`, `npm run build`, `npm test` (typecheck, vitest, coverage thresholds) without Nix. |
+| `npm` | `npm ci`, `npm run build`, `npm test` (typecheck, vitest, coverage thresholds), in the dev shell. |
 | `conventional commits` | Pull requests only: `convco check` over the commits of the PR. |
 | `release` | On a tag `vX.Y.Z`: checks the tag equals the `package.json` version, runs `npm pack` and creates a GitHub release with generated notes and the tarball attached. Tags with a suffix such as `v1.2.0-rc.1` become pre-releases. |
 
-Caching: the Nix jobs restore and save the Nix store with [`nix-community/cache-nix-action`](https://github.com/nix-community/cache-nix-action) (one cache per job and OS, keyed on `flake.lock`, `flake.nix`, `nix/` and, for the build, `package-lock.json`, with a prefix fallback and garbage collection above 2 GB), the `npm` and `release` jobs cache the npm downloads through `actions/setup-node`, and the `integration` job caches `~/.npm` with `actions/cache`.
+Caching: the Nix jobs restore and save the Nix store with [`nix-community/cache-nix-action`](https://github.com/nix-community/cache-nix-action) (one cache per job and OS, keyed on `flake.lock`, `flake.nix`, `nix/` and, for the build, `package-lock.json`, with a prefix fallback and garbage collection above 2 GB), the jobs that run npm (`integration`, `npm`, `release`) also cache `~/.npm` with `actions/cache`. Every step of every job runs inside the Nix shell (`nix develop --command …`); no tool is taken from the runner image.
 
 To release: bump `version` (`npm version <major|minor|patch> --no-git-tag-version`, plus the version string in `src/server.ts`), update `npmDepsHash` in `nix/package.nix` (it also changes with the lockfile's version), commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix`, `integration` and `npm` jobs succeed.
