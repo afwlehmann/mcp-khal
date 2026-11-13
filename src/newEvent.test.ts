@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidInput } from "./errors.js";
-import { newEvent, timestamp } from "./newEvent.js";
+import { newEvent, timestamp, titleWarning } from "./newEvent.js";
 import type { Settings } from "./settings.js";
 import { type FakeKhal, fakeKhal, runFail, runOk, unfold } from "./testlib.js";
 
@@ -10,6 +10,45 @@ const UID = "fixed-uid";
 describe("timestamp", () => {
   it("formats an ICS DTSTAMP", () => {
     expect(timestamp(NOW)).toBe("20261102T100000Z");
+  });
+});
+
+describe("titleWarning", () => {
+  it("warns about a slash in the title only", () => {
+    expect(titleWarning("Plan A/B")).toMatch(/CalDAV.*synchronization/);
+    expect(titleWarning("Lunch")).toBeUndefined();
+  });
+});
+
+describe("newEvent title warning", () => {
+  let fake: FakeKhal;
+  beforeEach(async () => {
+    fake = await fakeKhal({ stdout: "done\n" });
+  });
+  afterEach(async () => {
+    await fake.cleanup();
+  });
+  const base = { start: "2030-01-15 12:00", end: "13:00", calendar: "work" };
+
+  it("appends the warning to the success text for a plain event and an invite", async () => {
+    const s = fake.settings({ calendars: { work: { email: "me@work.com" } } });
+    expect(await runOk(newEvent(s, { ...base, summary: "A/B" }, UID, NOW))).toMatch(
+      /^done\n\s*WARNING: .*CalDAV/,
+    );
+    const invite = await runOk(newEvent(s, { ...base, summary: "A/B", attendees: ["you@x.org"] }, UID, NOW));
+    expect(invite).toMatch(/WARNING: .*CalDAV/);
+  });
+
+  it("adds nothing for a title without a slash, and the slash in other fields is fine", async () => {
+    const out = await runOk(
+      newEvent(fake.settings(), { ...base, summary: "Lunch", location: "a/b", description: "c/d" }, UID, NOW),
+    );
+    expect(out).toBe("done\n");
+  });
+
+  it("gives no warning when the event could not be created", async () => {
+    const e = await runFail(newEvent(fake.settings(), { ...base, summary: "-a/b" }, UID, NOW));
+    expect(e._tag).toBe("InvalidInput");
   });
 });
 

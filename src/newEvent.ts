@@ -18,11 +18,30 @@ export const timestamp = (now: Date): string =>
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}/, "");
 
+/** Advice for the calling agent when a title contains "/", else undefined. */
+export const titleWarning = (summary: string): string | undefined =>
+  summary.includes("/")
+    ? 'WARNING: the title contains "/". Some CalDAV servers have synchronization problems with such titles. The event was created; tell the user, and suggest a title without "/" (e.g. "-" or "and") if sync trouble appears.'
+    : undefined;
+
 /**
  * Plain events go through `khal new`; series and invites are built as ICS and imported.
  * The uid and the clock are passed in, so this never reads global state.
+ * A successful result carries a warning for the agent when the title contains "/".
  */
 export const newEvent = (
+  settings: Settings,
+  input: NewEventInput,
+  uid: string,
+  now: Date,
+): Effect.Effect<string, KhalError> => {
+  const warning = titleWarning(input.summary);
+  return Effect.map(createEvent(settings, input, uid, now), (out) =>
+    warning === undefined ? out : `${out}\n${warning}`,
+  );
+};
+
+const createEvent = (
   settings: Settings,
   { recurrence, attendees = [], organizer, ...p }: NewEventInput,
   uid: string,

@@ -14,7 +14,7 @@ An MCP server that lets an assistant read and create events in your [khal](https
 
 The three read tools return a JSON array of events with the fields `calendar`, `startDate`, `startTime`, `endDate`, `endTime`, `title`, `location`, `organizer`, `attendees`, `uid`, `status`, `cancelled`, `allDay`, `repeatPattern` and `description`. All values are khal's text renderings. `attendees` lists the invitees as khal shows them (names/emails); accept/decline status is not available through khal.
 
-`new_event` is the only tool that writes. Its description tells the calling agent to ask the user for confirmation first, and never to invite attendees without explicit approval. The other tools are read-only and also work on read-only calendars.
+`new_event` is the only tool that writes. Its description tells the calling agent to ask the user for confirmation first, and never to invite attendees without explicit approval. The other tools are read-only and also work on read-only calendars. If the title of a new event contains `/`, the event is still created, but the result ends with a warning for the agent: some CalDAV servers have synchronization problems with such titles.
 
 ### Default calendar
 When a `new_event` call names no `calendar`, the event goes to `defaultCalendar` from the config. It is required when khal has several calendars and optional when it has exactly one (that one is then used). The server checks at startup that khal has the calendar, and it always passes the calendar to khal explicitly: khal's own `default_calendar` is never relied on (without one, `khal new` fails at once with exit code 2; it does not prompt). The order in which khal lists calendars is irrelevant; calendar names are shown sorted.
