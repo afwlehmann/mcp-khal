@@ -48,6 +48,16 @@ let
           no reminder. An alarm given with the event overrides it.
         '';
       };
+      path = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "/[^[:cntrl:]]*");
+        default = null;
+        example = "/home/me/.local/share/calendars/work";
+        description = ''
+          Absolute path of the calendar's vdir (`path` in khal's config). Needed by the tools
+          that change existing events; the server checks at startup that it is a readable and
+          writable directory.
+        '';
+      };
     };
   };
 in
@@ -90,6 +100,7 @@ in
         work = {
           email = "me@example.com";
           alarm = "1d";
+          path = "/home/me/.local/share/calendars/work";
         };
         private = {
           email = "me@example.org";

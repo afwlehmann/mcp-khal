@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { InvalidInput } from "./errors.js";
@@ -231,6 +232,33 @@ describe("preflight", () => {
     } finally {
       await half.cleanup();
     }
+  });
+
+  it("accepts calendar paths that are writable directories", async () => {
+    const work = join(dir, "work");
+    await mkdir(work);
+    await runOk(preflight(settings({ calendars: { work: { path: work } } })));
+  });
+
+  it("names every calendar whose path is missing or not a directory, sorted", async () => {
+    const file = join(dir, "file");
+    await writeFile(file, "x");
+    const e = await runFail(
+      preflight(
+        settings({
+          calendars: {
+            work: { path: join(dir, "missing") },
+            home: { path: file },
+          },
+        }),
+      ),
+    );
+    expect(e.message).toMatch(/^2 problems:/);
+    expect(e.message).toContain(
+      `calendars.home.path ${file} is not a directory that can be read and written`,
+    );
+    expect(e.message).toContain("calendars.work.path");
+    expect(e.message.indexOf("calendars.home")).toBeLessThan(e.message.indexOf("calendars.work"));
   });
 
   it("reports a temporary directory that is missing", async () => {

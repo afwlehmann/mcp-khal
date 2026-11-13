@@ -14,7 +14,7 @@ describe("examples/mcp-khal.json", () => {
       khal: "khal",
       defaultCalendar: "work",
       calendars: {
-        work: { email: "me@example.com", alarm: "1d" },
+        work: { email: "me@example.com", alarm: "1d", path: "/home/me/.local/share/calendars/work" },
         private: { email: "me@example.org", alarm: "none" },
         school: { alarm: "90m" },
       },

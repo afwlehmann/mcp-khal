@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Effect, Result } from "effect";
 import { InvalidInput, ioError, type KhalError } from "./errors.js";
 import {
@@ -21,10 +21,15 @@ export const NO_ALARM = "none";
 
 /** Everything that can be configured for one calendar; every field is optional. */
 export interface CalendarConfig {
-  /** the user's own address on this calendar: the organizer of invites */
+  /** the user's own address on this calendar: the organizer of invites, and who answers invitations */
   readonly email?: string;
   /** reminder for new events on this calendar; none when unset */
   readonly alarm?: AlarmSetting;
+  /**
+   * Absolute path of the calendar's vdir (the directory of its .ics files, `path` in khal's config).
+   * Needed by the tools that change existing events; khal itself cannot do that non-interactively.
+   */
+  readonly path?: string;
 }
 
 /** calendar name (as khal reports it) -> its settings */
@@ -159,7 +164,16 @@ const parseAlarm = (raw: unknown, where: string): Validated<AlarmSetting> =>
     ? valid(raw.trim())
     : problem(`${where} must be ${ALARM_HINT}, got ${JSON.stringify(raw)}`);
 
-const CALENDAR_KEYS: readonly string[] = ["email", "alarm"];
+const parseVdirPath = (raw: unknown, where: string): Validated<string> => {
+  const p = typeof raw === "string" ? raw.trim() : undefined;
+  return p !== undefined && isAbsolute(p) && !CONTROL.test(p)
+    ? valid(p)
+    : problem(
+        `${where} must be an absolute path without control characters (no '~', no relative path), got ${JSON.stringify(raw)}`,
+      );
+};
+
+const CALENDAR_KEYS: readonly string[] = ["email", "alarm", "path"];
 
 /** One calendar's object: only `email` and `alarm` are known, each optional, every problem listed. */
 const parseCalendar = (raw: unknown, name: string): Validated<CalendarConfig> => {
@@ -181,10 +195,12 @@ const parseCalendar = (raw: unknown, name: string): Validated<CalendarConfig> =>
       ),
       email: raw.email === undefined ? valid(undefined) : parseEmail(raw.email, `${where}.email`),
       alarm: raw.alarm === undefined ? valid(undefined) : parseAlarm(raw.alarm, `${where}.alarm`),
+      path: raw.path === undefined ? valid(undefined) : parseVdirPath(raw.path, `${where}.path`),
     }),
-    ({ email, alarm }): CalendarConfig => ({
+    ({ email, alarm, path }): CalendarConfig => ({
       ...(email === undefined ? {} : { email }),
       ...(alarm === undefined ? {} : { alarm }),
+      ...(path === undefined ? {} : { path }),
     }),
   );
 };
@@ -215,6 +231,21 @@ const parseCalendars = (
         ).pipe(Result.map(() => ({}) as Calendars))
       : valid(Object.fromEntries(list) as Calendars);
   });
+};
+
+/** Two calendars cannot live in the same directory: a shared `path` is a copy-paste mistake. */
+const checkUniquePaths = (calendars: Calendars): Validated<Calendars> => {
+  const byPath = new Map<string, string[]>();
+  for (const [name, c] of Object.entries(calendars))
+    if (c.path !== undefined) byPath.set(resolve(c.path), [...(byPath.get(resolve(c.path)) ?? []), name]);
+  const shared = [...byPath.entries()].filter(([, names]) => names.length > 1);
+  return shared.length === 0
+    ? valid(calendars)
+    : collectAll(
+        shared.map(([path, names]) =>
+          problem(`calendars ${names.sort().join(" and ")} have the same path ${path}; each needs its own`),
+        ),
+      ).pipe(Result.map(() => calendars));
 };
 
 /** v1.2.0 keys that are gone or moved into `calendars.<name>`; named in the error so users can migrate. */
@@ -281,7 +312,7 @@ export const parseConfigValidated = (json: string): Validated<Config> =>
           calendars:
             raw.calendars === undefined
               ? valid({} as Calendars)
-              : parseCalendars(raw.calendars, "calendars", parseCalendar),
+              : Result.flatMap(parseCalendars(raw.calendars, "calendars", parseCalendar), checkUniquePaths),
         }),
         ({ khal, defaultCalendar, calendars }): Config => ({
           khal,
@@ -317,7 +348,10 @@ export const resolveCalendar = (
 ): string | undefined => (calendar !== undefined ? calendar.trim() : config.defaultCalendar);
 
 /** The settings of one calendar, by the (trimmed) name; inherited object properties never match. */
-const calendarOf = (calendars: Calendars, calendar: string | undefined): CalendarConfig | undefined => {
+export const calendarOf = (
+  calendars: Calendars,
+  calendar: string | undefined,
+): CalendarConfig | undefined => {
   const name = calendar?.trim();
   return name !== undefined && Object.hasOwn(calendars, name) ? calendars[name] : undefined;
 };

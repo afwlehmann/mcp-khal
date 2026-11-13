@@ -73,7 +73,7 @@ The config file is `$MCP_KHAL_CONFIG`, else `$XDG_CONFIG_HOME/mcp-khal.json`, el
   "khal": "khal",
   "defaultCalendar": "work",
   "calendars": {
-    "work": { "email": "me@example.com", "alarm": "1d" },
+    "work": { "email": "me@example.com", "alarm": "1d", "path": "/home/me/.local/share/calendars/work" },
     "private": { "email": "me@example.org", "alarm": "none" },
     "school": { "alarm": "90m" }
   }
@@ -88,12 +88,13 @@ A ready-to-copy version is installed with the package at `share/doc/mcp-khal/exa
 | `defaultCalendar` | unset | The calendar `new_event` uses when a call names none, by the name khal reports. Required when khal has several calendars, optional with one. Checked against khal at startup. See [Default calendar](#default-calendar). |
 | `calendars` | `{ }` | One object per calendar, by the name khal reports (`khal printcalendars`). |
 
-Each entry of `calendars` has two optional fields and nothing else (a typo such as `emial` is an error):
+Each entry of `calendars` has three optional fields and nothing else (a typo such as `emial` is an error):
 
 | Field | Meaning |
 |---|---|
 | `email` | Your address on this calendar: the organizer of invites created there. Written by `mcp-khal setup`. |
 | `alarm` | Reminder for new events on this calendar; `none` or unset means no reminder. |
+| `path` | Absolute path of the calendar's vdir (`path` in khal's own config), the directory of its `.ics` files. khal cannot change existing events non-interactively, so the tools that do (editing, ending a series, answering invitations) edit the `.ics` file there. Without it, those tools refuse that calendar. Checked at startup: a readable and writable directory. |
 
 Migrating from v1.2.0 (breaking): `calendarEmails` and `calendarAlarms` moved into the per-calendar objects (`"calendarEmails": { "work": "a@b.c" }` is now `"calendars": { "work": { "email": "a@b.c" } }`, likewise `alarm`), and `defaultAlarm` is gone: put an `alarm` on each calendar and name the calendar for events without one in `defaultCalendar`. A config that still uses a retired key is refused at startup with a message that says so.
 
@@ -122,17 +123,18 @@ mcp-khal cannot start: InvalidInput: 3 problems:
 All strings from the environment and the config file are trimmed before they are checked, so `" 15m "` is `15m`. Whitespace inside a value is not removed (`5 m` is invalid), and an environment variable that is empty or only whitespace counts as unset.
 
 First, the values themselves:
-- **JSON and keys:** the file must be valid JSON with only the keys above, and every calendar object only `email` and `alarm`; a typo such as `emial` is an error, not silently ignored.
+- **JSON and keys:** the file must be valid JSON with only the keys above, and every calendar object only `email`, `alarm` and `path`; a typo such as `emial` is an error, not silently ignored.
 - **`khal` in the config and `MCP_KHAL_BIN`:** a bare command name (looked up on `PATH`) or an absolute path, never a relative path. Relative paths (`./khal`, `bin/khal`, `../khal`), `~` (never expanded), names with spaces or a leading `-`, and control characters are rejected.
 - **`MCP_KHAL_CONFIG` and `XDG_CONFIG_HOME`:** absolute paths.
 - **Calendar names** (the keys of `calendars` and `defaultCalendar`): not empty, no control characters, and unique after trimming.
-- **Addresses** must look like email addresses, **reminders** like the section above.
+- **Addresses** must look like email addresses, **reminders** like the section above, and a calendar **`path`** must be absolute (no `~`, no relative path, no control characters) and different for every calendar.
 
 Then the values against the machine:
 - the khal executable runs (`khal --version`) and can list its calendars,
 - every calendar named in `calendars` exists in khal (the message lists the calendars khal has, sorted, which catches typos),
 - `defaultCalendar` exists in khal, and is set when khal has several calendars (with exactly one it is filled in),
 - the temporary directory exists and is writable,
+- every configured calendar `path` is a directory that can be read and written,
 - a config file named explicitly by `MCP_KHAL_CONFIG` exists (the default location may be missing: that means the defaults).
 
 `mcp-khal setup` applies the first group but not the machine checks, so it can still be used to repair a configuration that names calendars khal no longer has.

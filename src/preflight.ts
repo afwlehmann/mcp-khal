@@ -1,10 +1,10 @@
-import { access, constants } from "node:fs/promises";
+import { access, constants, stat } from "node:fs/promises";
 import { Effect, Result } from "effect";
 import { parseCalendarNames } from "./config.js";
 import type { KhalError } from "./errors.js";
 import { calendarsArgs, execute, runKhal } from "./khal.js";
 import type { Settings } from "./settings.js";
-import { collect, problem, toInvalidInput, type Validated, valid } from "./validation.js";
+import { collect, collectAll, problem, toInvalidInput, type Validated, valid } from "./validation.js";
 
 /** Names the config mentions that khal does not know (compared exactly, after trimming). */
 export const unknownCalendars = (configured: readonly string[], known: readonly string[]): string[] =>
@@ -58,6 +58,30 @@ export const checkCalendars = (settings: Settings, names: readonly string[]): Va
   return Result.map(collect({ configured, effective }), (v) => v.effective);
 };
 
+/** Every configured calendar `path` must be a directory the server can read and write. */
+const checkVdirs = (settings: Settings): Effect.Effect<Validated<readonly unknown[]>> =>
+  Effect.map(
+    Effect.all(
+      Object.entries(settings.calendars)
+        .filter(([, c]) => c.path !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, c]) =>
+          attempt(
+            Effect.tryPromise({
+              try: async () => {
+                const path = c.path ?? "";
+                if (!(await stat(path)).isDirectory()) throw new Error("not a directory");
+                await access(path, constants.R_OK | constants.W_OK);
+              },
+              catch: (u) => u as KhalError,
+            }),
+            () => `calendars.${name}.path ${c.path} is not a directory that can be read and written`,
+          ),
+        ),
+    ),
+    (checks) => collectAll(checks),
+  );
+
 /**
  * Checks at server start that what the configuration says matches the machine. All checks run and
  * all their problems are reported together. The calendar checks need a working khal, so they are
@@ -81,6 +105,8 @@ export const preflight = (settings: Settings): Effect.Effect<Settings, KhalError
       () => `the temporary directory ${settings.tmpDir} does not exist or is not writable`,
     );
 
+    const vdirs = yield* checkVdirs(settings);
+
     const khalRuns = yield* attempt(
       runKhal(settings, ["--version"]),
       (e) => `khal (${settings.khal}, from ${settings.khalSource}) cannot be run: ${e._tag}: ${e.message}`,
@@ -96,7 +122,7 @@ export const preflight = (settings: Settings): Effect.Effect<Settings, KhalError
         )
       : Effect.succeed(valid(undefined));
 
-    return yield* Result.match(collect({ configFile, tmpDir, khalRuns, calendars }), {
+    return yield* Result.match(collect({ configFile, tmpDir, vdirs, khalRuns, calendars }), {
       onFailure: (problems) => Effect.fail(toInvalidInput(problems)),
       onSuccess: (v) =>
         Effect.succeed<Settings>({

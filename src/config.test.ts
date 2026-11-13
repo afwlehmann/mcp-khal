@@ -17,6 +17,33 @@ import {
 } from "./config.js";
 import { failure, unwrap } from "./testlib.js";
 
+describe("calendar path", () => {
+  const cfg = (calendars: unknown): string => JSON.stringify({ calendars });
+
+  it("is read, trimmed and written back", () => {
+    const config = unwrap(parseConfig(cfg({ work: { path: "  /data/work " } })));
+    expect(config.calendars.work).toEqual({ path: "/data/work" });
+    expect(unwrap(parseConfig(serializeConfig(config)))).toEqual(config);
+  });
+
+  it.each(["work/", "~/cal", "", "/a\u0007b", 5, null])("rejects the value %j", (path) => {
+    const problems = failure(parseConfig(cfg({ work: { path } })));
+    expect(problems.message).toContain("calendars.work.path must be an absolute path");
+  });
+
+  it("rejects two calendars with the same directory, even written differently", () => {
+    const e = failure(
+      parseConfig(cfg({ a: { path: "/data/x" }, b: { path: "/data/x/" }, c: { path: "/y" } })),
+    );
+    expect(e.message).toBe("calendars a and b have the same path /data/x; each needs its own");
+  });
+
+  it("reports every bad path at once", () => {
+    const e = failure(parseConfig(cfg({ a: { path: "rel" }, b: { path: "~/b" } })));
+    expect(e.message).toMatch(/^2 problems:/);
+  });
+});
+
 describe("isEmail", () => {
   it("accepts plain addresses and rejects junk", () => {
     expect(isEmail("me@example.com")).toBe(true);
@@ -227,7 +254,7 @@ describe("calendar objects", () => {
 
   it("reject unknown keys, so typos are not silently ignored", () => {
     expect(problemsOf({ work: { emial: "me@work.com" } })).toBe(
-      "calendars.work has an unknown key 'emial' (expected 'email', 'alarm')",
+      "calendars.work has an unknown key 'emial' (expected 'email', 'alarm', 'path')",
     );
   });
 
