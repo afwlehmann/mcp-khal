@@ -54,8 +54,29 @@ const flag = (name: string, v: string | undefined): readonly string[] => (v === 
 
 // ---------- pure argv builders ----------
 
-export const EVENT_FORMAT =
-  "{calendar}|{start-date}|{start-time}|{end-date}|{end-time}|{title}|{location}|{description}";
+/** Field and record separators (ASCII US / RS): they cannot clash with text and survive newlines in descriptions. */
+const FS = "\u001f";
+const RS = "\u001e";
+
+const EVENT_PLACEHOLDERS = [
+  "calendar",
+  "start-date",
+  "start-time",
+  "end-date",
+  "end-time",
+  "title",
+  "location",
+  "organizer",
+  "attendees",
+  "uid",
+  "status",
+  "cancelled",
+  "all-day",
+  "repeat-pattern",
+  "description", // last: free text
+] as const;
+
+export const EVENT_FORMAT = `${EVENT_PLACEHOLDERS.map((p) => `{${p}}`).join(FS)}${RS}`;
 
 export interface ListParams {
   readonly range?: string;
@@ -211,16 +232,41 @@ export interface KhalEvent {
   readonly endTime: string;
   readonly title: string;
   readonly location: string;
+  readonly organizer: string;
+  /** khal's rendering of the invitees (names/emails); no accept/decline status */
+  readonly attendees: string;
+  readonly uid: string;
+  readonly status: string;
+  readonly cancelled: string;
+  readonly allDay: string;
+  readonly repeatPattern: string;
   readonly description: string;
 }
 
 export const parseEvents = (stdout: string): KhalEvent[] =>
   stdout
-    .split("\n")
-    .filter((l) => l.split("|").length >= 8)
-    .map((l) => {
-      const [calendar, startDate, startTime, endDate, endTime, title, location, ...rest] = l.split("|");
-      return {
+    .split(RS)
+    .map((r) => r.replace(/^\n+/, ""))
+    .map((r) => r.split(FS))
+    .filter((f) => f.length === EVENT_PLACEHOLDERS.length)
+    .map(
+      ([
+        calendar,
+        startDate,
+        startTime,
+        endDate,
+        endTime,
+        title,
+        location,
+        organizer,
+        attendees,
+        uid,
+        status,
+        cancelled,
+        allDay,
+        repeatPattern,
+        description,
+      ]) => ({
         calendar: calendar!,
         startDate: startDate!,
         startTime: startTime!,
@@ -228,6 +274,13 @@ export const parseEvents = (stdout: string): KhalEvent[] =>
         endTime: endTime!,
         title: title!,
         location: location!,
-        description: rest.join("|"),
-      };
-    });
+        organizer: organizer!,
+        attendees: attendees!,
+        uid: uid!,
+        status: status!,
+        cancelled: cancelled!,
+        allDay: allDay!,
+        repeatPattern: repeatPattern!,
+        description: description!,
+      }),
+    );

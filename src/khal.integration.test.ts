@@ -263,6 +263,12 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       );
       expect(review?.title).toBe("Design review, part 1; agenda");
       expect(review?.location).toBe("Room 1, Floor 2");
+      // invitees, organizer and identity are readable; the multi-line description stays one event
+      expect(review?.organizer).toContain("me@work.com");
+      expect(review?.attendees).toContain("you@example.com");
+      expect(review?.attendees).toContain("Other@Example.com");
+      expect(review?.uid).toMatch(/^integration-uid-\d+@mcp-khal$/);
+      expect(review?.description).toContain("line1\nline2");
 
       // the vdir file khal wrote, inside the sandbox
       const dir = join(root, "calendars", "work");

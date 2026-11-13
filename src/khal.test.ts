@@ -110,19 +110,55 @@ describe("input validation", () => {
 });
 
 describe("parseEvents", () => {
-  it("parses pipe-delimited lines and keeps pipes in the description", () => {
-    const out = "work|2026-11-01|10:00|2026-11-01|11:00|Lunch|Cafe|a|b\nnoise\n";
-    expect(parseEvents(out)).toEqual([
+  const rec = (f: string[]): string => `${f.join("\u001f")}\u001e\n`;
+  const base = [
+    "work",
+    "2026-11-01",
+    "10:00",
+    "2026-11-01",
+    "11:00",
+    "Lunch | Learn",
+    "Cafe",
+    "Ann <ann@x.org>",
+    "Bob <bob@x.org>, Cy <cy@x.org>",
+    "uid-1",
+    "CONFIRMED",
+    "False",
+    "False",
+    "",
+    "line1\nline2 | x",
+  ];
+
+  it("parses all fields, keeping pipes and newlines in text", () => {
+    expect(parseEvents(`\n${rec(base)}`)).toEqual([
       {
         calendar: "work",
         startDate: "2026-11-01",
         startTime: "10:00",
         endDate: "2026-11-01",
         endTime: "11:00",
-        title: "Lunch",
+        title: "Lunch | Learn",
         location: "Cafe",
-        description: "a|b",
+        organizer: "Ann <ann@x.org>",
+        attendees: "Bob <bob@x.org>, Cy <cy@x.org>",
+        uid: "uid-1",
+        status: "CONFIRMED",
+        cancelled: "False",
+        allDay: "False",
+        repeatPattern: "",
+        description: "line1\nline2 | x",
       },
     ]);
+  });
+
+  it("parses several records and handles empty attendees", () => {
+    const second = base.map((v, i) => (i === 8 ? "" : v));
+    const events = parseEvents(rec(base) + rec(second));
+    expect(events.map((e) => e.attendees)).toEqual(["Bob <bob@x.org>, Cy <cy@x.org>", ""]);
+  });
+
+  it("ignores empty output and malformed records", () => {
+    expect(parseEvents("")).toEqual([]);
+    expect(parseEvents(rec(["too", "few"]))).toEqual([]);
   });
 });

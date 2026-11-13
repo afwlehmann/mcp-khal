@@ -25,7 +25,11 @@ describe("MCP server (in process)", () => {
   let client: Client;
 
   beforeAll(async () => {
-    fake = await fakeKhal({ stdout: "work|2026-11-01|10:00|2026-11-01|11:00|Lunch|Cafe|notes\n" });
+    const fields = [
+      ...["work", "2026-11-01", "10:00", "2026-11-01", "11:00", "Lunch", "Cafe"],
+      ...["Me <me@work.com>", "Bob <bob@x.org>", "uid-1", "CONFIRMED", "False", "False", "", "notes"],
+    ];
+    fake = await fakeKhal({ stdout: `${fields.join("\u001f")}\u001e\n` });
     client = await connect(fake, { work: { email: "me@work.com" } });
   });
   afterAll(async () => {
@@ -61,9 +65,10 @@ describe("MCP server (in process)", () => {
 
   it("list_events returns parsed JSON", async () => {
     const r = await client.callTool({ name: "list_events", arguments: { range: "today", calendar: "work" } });
-    const events = JSON.parse(textOf(r)) as { title: string; location: string }[];
+    const events = JSON.parse(textOf(r)) as { title: string; location: string; attendees: string }[];
     expect(events[0]?.title).toBe("Lunch");
     expect(events[0]?.location).toBe("Cafe");
+    expect(events[0]?.attendees).toBe("Bob <bob@x.org>");
   });
 
   it("events_in_range and search_events return parsed JSON", async () => {
