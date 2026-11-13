@@ -104,6 +104,15 @@ export const setProp = (event: Event, name: string, line: string | undefined): E
   );
 };
 
+/** Replaces every own property line of that name with `f(prop, line)`. */
+export const mapProps = (event: Event, name: string, f: (p: Prop, line: string) => string): Event => {
+  const own = new Set(ownIndexes(event));
+  return event.map((l, i) => {
+    const p = own.has(i) ? parseProp(l) : undefined;
+    return p?.name === name ? f(p, l) : l;
+  });
+};
+
 export const isMaster = (event: Event): boolean => prop(event, "RECURRENCE-ID") === undefined;
 
 export const uidOf = (lines: readonly string[]): string | undefined => {
@@ -117,6 +126,13 @@ export const stamp = (now: Date): string =>
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}/, "");
+
+/** LAST-MODIFIED and DTSTAMP now, SEQUENCE untouched (an attendee's reply keeps the organizer's). */
+export const restamp = (event: Event, now: Date): Event =>
+  [
+    ["LAST-MODIFIED", stamp(now)],
+    ["DTSTAMP", stamp(now)],
+  ].reduce<Event>((e, [name, value]) => setProp(e, name ?? "", `${name}:${value}`), event);
 
 /** Marks an event as modified: SEQUENCE + 1, LAST-MODIFIED and DTSTAMP now. */
 export const touch = (event: Event, now: Date): Event => {

@@ -7,6 +7,7 @@ import type { KhalError } from "./errors.js";
 import { calendarsArgs, execute, listArgs, parseEvents, rangeArgs, searchArgs } from "./khal.js";
 import { newEvent } from "./newEvent.js";
 import { RecurrenceSpec } from "./recurrence.js";
+import { respondToEvent } from "./respondEvent.js";
 import type { Settings } from "./settings.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -136,6 +137,22 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
         endSeries(settings, { calendar: p.calendar, uid: p.uid, lastDate: p.last_date }, deps.now()),
         plain,
       ),
+  );
+
+  server.tool(
+    "respond_to_event",
+    "WRITE OPERATION: this changes the user's own participation status (accept, decline or tentative) on an invitation in their calendar and cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and the answer). Edits the event's .ics file, so the calendar needs a `path` in the server's config; the user's address is the calendar's configured `email`, which must be among the event's attendees. Identify the event by `calendar` and `uid` (both are in the output of the read tools). For a recurring event `scope` is 'all' (default) or 'instance' (only the occurrence on `date`, 'YYYY-MM-DD'). khal sends nothing: the organizer is not notified unless the user's sync or mail tooling does that, so tell the user so.",
+    {
+      calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
+      uid: z.string().describe("The event's `uid` from the read tools"),
+      response: z.enum(["accepted", "declined", "tentative"]),
+      scope: z
+        .enum(["all", "instance"])
+        .optional()
+        .describe("Recurring events: 'all' (default) or one occurrence"),
+      date: z.string().optional().describe("'YYYY-MM-DD' of the occurrence, for scope 'instance'"),
+    },
+    (p) => respond(respondToEvent(settings, p, deps.now()), plain),
   );
 
   return server;

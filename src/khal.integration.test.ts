@@ -522,6 +522,44 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(no.text).toMatch(/no occurrence on 2030-04-16/);
     });
 
+    it("respond_to_event answers an invitation that khal received, and khal keeps listing it", async () => {
+      const invitation = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//test//EN",
+        "BEGIN:VEVENT",
+        "UID:boss-invite-1",
+        "DTSTAMP:20300101T000000Z",
+        "SUMMARY:Boss invite",
+        "DTSTART:20300506T100000",
+        "DTEND:20300506T110000",
+        "ORGANIZER:mailto:boss@example.com",
+        "ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:me@work.com",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n");
+      await writeFile(join(root, "calendars", "work", "boss-invite-1.ics"), invitation);
+      const [before] = (await events("list_events", { range: "2030-05-06" })).filter(
+        (e) => e.title === "Boss invite",
+      );
+      expect(before?.uid).toBe("boss-invite-1");
+
+      const r = await call("respond_to_event", {
+        calendar: "work",
+        uid: "boss-invite-1",
+        response: "accepted",
+      });
+      expect(r.error, r.text).toBe(false);
+      expect(await storedIcs("work", "Boss invite")).toMatch(
+        /ATTENDEE;[^\r\n]*PARTSTAT=ACCEPTED[^\r\n]*:mailto:me@work\.com/,
+      );
+      const [after] = (await events("list_events", { range: "2030-05-06" })).filter(
+        (e) => e.title === "Boss invite",
+      );
+      expect(after?.attendees).toContain("me@work.com");
+    });
+
     it("update_event on a calendar of another event does not find it", async () => {
       const uid = await uidOf("Planning v2", "2030-03-05");
       const r = await call("update_event", { calendar: "home", uid, summary: "x" });

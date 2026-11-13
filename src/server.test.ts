@@ -45,6 +45,7 @@ describe("MCP server (in process)", () => {
       "list_calendars",
       "list_events",
       "new_event",
+      "respond_to_event",
       "search_events",
       "update_event",
     ]);
@@ -55,7 +56,7 @@ describe("MCP server (in process)", () => {
     const described = (name: string): string => tools.find((t) => t.name === name)?.description ?? "";
     expect(described("new_event")).toMatch(/WRITE OPERATION/);
     expect(described("new_event")).toMatch(/Ask the user for confirmation/);
-    for (const name of ["update_event", "end_event_series"]) {
+    for (const name of ["update_event", "end_event_series", "respond_to_event"]) {
       expect(described(name)).toMatch(/WRITE OPERATION/);
       expect(described(name)).toMatch(/cannot be undone/);
       expect(described(name)).toMatch(/Ask the user for confirmation/);

@@ -99,7 +99,10 @@ const parseChanges = (p: UpdateParams): V<Changes> =>
     };
   });
 
-const scopeOf = (p: UpdateParams): V<{ scope: Scope; date: string | undefined }> => {
+export const scopeOf = (p: {
+  scope?: Scope | undefined;
+  date?: string | undefined;
+}): V<{ scope: Scope; date: string | undefined }> => {
   const scope = p.scope ?? "all";
   if (scope === "all")
     return p.date === undefined
@@ -205,21 +208,32 @@ export const updateInstance = (lines: readonly string[], p: UpdateParams, now: D
   Result.gen(function* () {
     const { date } = yield* scopeOf(p);
     const ch = yield* parseChanges(p);
+    if (date === undefined) return yield* fail("the event is not a recurring event");
+    return yield* editInstance(lines, date, (e) => Result.map(applyChanges(e, ch), (x) => touch(x, now)));
+  });
+
+/**
+ * Applies `edit` to the exception of the occurrence on `date` (compact), writing the exception first
+ * (a copy of the main event moved to that day) when there is none. `edit` marks the event as modified.
+ */
+export const editInstance = (
+  lines: readonly string[],
+  date: string,
+  edit: (e: Event) => V<Event>,
+): V<string[]> =>
+  Result.gen(function* () {
     const master = yield* mainEvent(lines);
-    if (date === undefined || !isRecurring(master)) return yield* fail("the event is not a recurring event");
+    if (!isRecurring(master)) return yield* fail("the event is not a recurring event");
     const existing = events(lines).find((e) => !isMaster(e) && exceptionDate(e) === date);
     if (existing !== undefined) {
-      const edited = touch(yield* applyChanges(existing, ch), now);
+      const edited = yield* edit(existing);
       return mapEvents(lines, (e, main) => (!main && exceptionDate(e) === date ? edited : e));
     }
     const dtstart = prop(master, "DTSTART");
     const rid = dtstart === undefined ? undefined : recurrenceId(dtstart, date);
     if (rid === undefined) return yield* fail("the event has no readable DTSTART");
-    const own = yield* shiftedTo(
-      without(master, ["RRULE", "RDATE", "EXDATE", "RECURRENCE-ID", "SEQUENCE"]),
-      date,
-    );
-    const created = touch(yield* applyChanges(setProp(own, "RECURRENCE-ID", rid), ch), now);
+    const own = yield* shiftedTo(without(master, ["RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"]), date);
+    const created = yield* edit(setProp(own, "RECURRENCE-ID", rid));
     const end = lines.map((l) => l.toUpperCase()).lastIndexOf("END:VCALENDAR");
     return end < 0
       ? yield* fail("the file has no END:VCALENDAR")

@@ -73,6 +73,14 @@ describe("tools that change existing events (in process)", () => {
     expect(badDate.text).toMatch(/real date/);
   });
 
+  it("respond_to_event answers an invitation, or reports why it cannot", async () => {
+    const ok = await call("respond_to_event", { calendar: "work", uid: "u1", response: "declined" });
+    expect(ok.error, ok.text).toBe(false);
+    expect(await stored()).toContain("PARTSTAT=DECLINED:mailto:me@example.com");
+    const missing = await call("respond_to_event", { calendar: "work", uid: "nope", response: "accepted" });
+    expect(missing.error).toBe(true);
+  });
+
   it("update_event reports a missing event as an error result", async () => {
     const r = await call("update_event", { calendar: "work", uid: "nope", summary: "x" });
     expect(r.error).toBe(true);
