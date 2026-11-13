@@ -40,7 +40,7 @@ export interface ServerDeps {
 }
 
 export const createServer = (settings: Settings, deps: ServerDeps): McpServer => {
-  const server = new McpServer({ name: "mcp-khal", version: "2.0.0" });
+  const server = new McpServer({ name: "mcp-khal", version: "2.1.0" });
 
   server.tool("list_calendars", "List configured khal calendars.", {}, () =>
     respond(execute(settings, calendarsArgs()), plain),
