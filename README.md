@@ -1,6 +1,6 @@
 # mcp-khal
 
-An MCP server that lets an assistant read and create events in your [khal](https://github.com/pimutils/khal) calendars.
+An MCP server that lets an assistant read, create and change events in your [khal](https://github.com/pimutils/khal) calendars.
 
 ## Tools
 
@@ -11,9 +11,10 @@ An MCP server that lets an assistant read and create events in your [khal](https
 | `events_in_range` | List all events intersecting a time range | `start`, `end`, `calendar?` |
 | `search_events` | Search events by text | `query`, `calendar?` |
 | `new_event` | Create an event or a recurring series | `start`, `end?`, `summary`, `calendar?`, `location?`, `description?`, `alarm?`, `recurrence?`, `attendees?`, `organizer?` |
+| `update_event` | Change an existing event, all of a series, one occurrence or the occurrences from a date on (needs the calendar's `path`) | `calendar`, `uid`, `scope?`, `date?`, `summary?`, `location?`, `description?`, `start?`, `end?` |
+| `end_event_series` | End a recurring event after a given day (needs the calendar's `path`) | `calendar`, `uid`, `last_date` |
 
 The three read tools return a JSON array of events with the fields `calendar`, `startDate`, `startTime`, `endDate`, `endTime`, `title`, `location`, `organizer`, `attendees`, `uid`, `status`, `cancelled`, `allDay`, `repeatPattern` and `description`. All values are khal's text renderings. `attendees` lists the invitees as khal shows them (names/emails); accept/decline status is not available through khal.
-| `update_event` | Change an existing event, all of a series, one occurrence or the occurrences from a date on (needs the calendar's `path`) | `calendar`, `uid`, `scope?`, `date?`, `summary?`, `location?`, `description?`, `start?`, `end?` |
 
 `update_event` rewrites the event's `.ics` file in the calendar's `path` (see [Configuration](#configuration)), atomically, and the previous version is not kept: it cannot be undone. Its description says so and tells the agent to ask the user first. The event is identified by `calendar` and `uid` (both are in the output of the read tools). Only the given fields change; an empty `location` or `description` removes it. `start` (`YYYY-MM-DD HH:MM`) and `end` (`HH:MM`, same day) go together and are in the event's own time zone (UTC for an event stored in UTC). All-day events cannot be moved. Attendees are not touched and no invitation update is sent. SEQUENCE, LAST-MODIFIED and DTSTAMP are updated.
 
@@ -27,7 +28,9 @@ For a recurring event `scope` says what changes, so the agent never touches ICS 
 
 `date` (`YYYY-MM-DD`) must be a day on which khal shows an occurrence, so excluded days and days beyond the end of the series are refused before anything is written. For `from_date` the new series is written first, so a failure in between leaves a duplicate rather than losing events.
 
-`new_event` and `update_event` are the tools that write. Its description tells the calling agent to ask the user for confirmation first, and never to invite attendees without explicit approval. The other tools are read-only and also work on read-only calendars. If the title of a new event contains `/`, the event is still created, but the result ends with a warning for the agent: some CalDAV servers have synchronization problems with such titles.
+`end_event_series` makes `last_date` (`YYYY-MM-DD`, an existing occurrence after the first) the last occurrence: the rule gets an `UNTIL` just after it (replacing a `COUNT`) and exceptions after it are dropped. It rewrites the `.ics` file like `update_event`, cannot be undone, and says so in its description. It never removes a whole event, and no cancellation is sent to attendees.
+
+`new_event`, `update_event` and `end_event_series` are the tools that write. Their descriptions tell the calling agent to ask the user for confirmation first (and never to invite attendees without explicit approval). The other tools are read-only and also work on read-only calendars. If the title of a new event contains `/`, the event is still created, but the result ends with a warning for the agent: some CalDAV servers have synchronization problems with such titles.
 
 ### Default calendar
 When a `new_event` call names no `calendar`, the event goes to `defaultCalendar` from the config. It is required when khal has several calendars and optional when it has exactly one (that one is then used). The server checks at startup that khal has the calendar, and it always passes the calendar to khal explicitly: khal's own `default_calendar` is never relied on (without one, `khal new` fails at once with exit code 2; it does not prompt). The order in which khal lists calendars is irrelevant; calendar names are shown sorted.

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Effect } from "effect";
 import { z } from "zod";
 import { updateEvent } from "./editEvent.js";
+import { endSeries } from "./endSeries.js";
 import type { KhalError } from "./errors.js";
 import { calendarsArgs, execute, listArgs, parseEvents, rangeArgs, searchArgs } from "./khal.js";
 import { newEvent } from "./newEvent.js";
@@ -120,6 +121,21 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
       end: z.string().optional().describe("New end 'HH:MM' on the day of `start`; needs `start`"),
     },
     (p) => respond(updateEvent(settings, p, deps.uid(), deps.now()), plain),
+  );
+
+  server.tool(
+    "end_event_series",
+    "WRITE OPERATION: this ends a recurring event in the user's calendar: every occurrence after `last_date` disappears, and it cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and its new last day). Edits the event's .ics file, so the calendar needs a `path` in the server's config. Identify the event by `calendar` and `uid` (both are in the output of the read tools). `last_date` ('YYYY-MM-DD') is the last occurrence that stays; it must be an existing occurrence after the first one (use update_event to change a series, nothing here deletes a whole event). Exceptions after `last_date` are dropped; no cancellation is sent to attendees.",
+    {
+      calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
+      uid: z.string().describe("The event's `uid` from the read tools"),
+      last_date: z.string().describe("'YYYY-MM-DD' of the last occurrence that stays"),
+    },
+    (p) =>
+      respond(
+        endSeries(settings, { calendar: p.calendar, uid: p.uid, lastDate: p.last_date }, deps.now()),
+        plain,
+      ),
   );
 
   return server;

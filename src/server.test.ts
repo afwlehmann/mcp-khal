@@ -40,6 +40,7 @@ describe("MCP server (in process)", () => {
   it("lists exactly the documented tools", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "end_event_series",
       "events_in_range",
       "list_calendars",
       "list_events",
@@ -54,8 +55,11 @@ describe("MCP server (in process)", () => {
     const described = (name: string): string => tools.find((t) => t.name === name)?.description ?? "";
     expect(described("new_event")).toMatch(/WRITE OPERATION/);
     expect(described("new_event")).toMatch(/Ask the user for confirmation/);
-    expect(described("update_event")).toMatch(/WRITE OPERATION/);
-    expect(described("update_event")).toMatch(/Ask the user for confirmation/);
+    for (const name of ["update_event", "end_event_series"]) {
+      expect(described(name)).toMatch(/WRITE OPERATION/);
+      expect(described(name)).toMatch(/cannot be undone/);
+      expect(described(name)).toMatch(/Ask the user for confirmation/);
+    }
     for (const name of ["list_calendars", "list_events", "events_in_range", "search_events"])
       expect(described(name)).not.toMatch(/WRITE OPERATION/);
   });

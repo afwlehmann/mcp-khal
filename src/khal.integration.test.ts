@@ -509,6 +509,19 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(await storedIcs("work", "Review later")).toMatch(/RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=2/);
     });
 
+    it("end_event_series ends a series after the given day", async () => {
+      const uid = await weekly("Weekly demo");
+      const r = await call("end_event_series", { calendar: "work", uid, last_date: "2030-04-09" });
+      expect(r.error, r.text).toBe(false);
+      expect(await april("Weekly demo")).toEqual([
+        "2030-04-02 09:00 Weekly demo",
+        "2030-04-09 09:00 Weekly demo",
+      ]);
+      const no = await call("end_event_series", { calendar: "work", uid, last_date: "2030-04-16" });
+      expect(no.error).toBe(true);
+      expect(no.text).toMatch(/no occurrence on 2030-04-16/);
+    });
+
     it("update_event on a calendar of another event does not find it", async () => {
       const uid = await uidOf("Planning v2", "2030-03-05");
       const r = await call("update_event", { calendar: "home", uid, summary: "x" });

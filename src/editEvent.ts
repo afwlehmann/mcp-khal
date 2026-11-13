@@ -295,7 +295,7 @@ export const splitSeries = (
 // ---------- effects ----------
 
 /** ISO dates (YYYY-MM-DD) on which khal shows an occurrence of the event, within a khal range. */
-const occurrenceDates = (
+export const occurrenceDates = (
   settings: Settings,
   calendar: string,
   uid: string,
@@ -307,7 +307,7 @@ const occurrenceDates = (
       .map((e) => e.startDate),
   );
 
-const isoOf = (compact: string): string =>
+export const isoOf = (compact: string): string =>
   `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
 
 /** Changes an existing event, or part of a series, in the calendar's vdir. */

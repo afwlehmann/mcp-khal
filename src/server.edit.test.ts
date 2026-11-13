@@ -60,6 +60,19 @@ describe("tools that change existing events (in process)", () => {
     expect(await stored()).toContain("SUMMARY:Sync");
   });
 
+  it("end_event_series reports problems as error results", async () => {
+    const missing = await call("end_event_series", {
+      calendar: "work",
+      uid: "nope",
+      last_date: "2030-10-19",
+    });
+    expect(missing.error).toBe(true);
+    expect(missing.text).toMatch(/^InvalidInput: no event with uid 'nope'/);
+    const badDate = await call("end_event_series", { calendar: "work", uid: "u1", last_date: "soon" });
+    expect(badDate.error).toBe(true);
+    expect(badDate.text).toMatch(/real date/);
+  });
+
   it("update_event reports a missing event as an error result", async () => {
     const r = await call("update_event", { calendar: "work", uid: "nope", summary: "x" });
     expect(r.error).toBe(true);
