@@ -35,6 +35,12 @@ For a recurring event `scope` says what changes, so the agent never touches ICS 
 
 `new_event`, `update_event`, `end_event_series` and `respond_to_event` are the tools that write. Their descriptions tell the calling agent to ask the user for confirmation first (and never to invite attendees without explicit approval). The other tools are read-only and also work on read-only calendars. If the title of a new event contains `/`, the event is still created, but the result ends with a warning for the agent: some CalDAV servers have synchronization problems with such titles.
 
+### Input checks
+Everything an agent passes in is checked before anything is run or written, and a failed check changes nothing:
+- **Shape (schema):** `calendar` and `uid` at most 255 characters; summary and location at most 1,000, description at most 20,000; days exactly `YYYY-MM-DD` (then checked to be a real date); `scope` and `response` only the listed values.
+- **Text** (summary, location, description): no control characters or Unicode line/paragraph separators; line breaks, `,`, `;` and `\` are escaped, so text can never add ICS lines or properties. Arguments given to khal never start with `-` and follow `--`.
+- **Files:** a calendar is addressed by its configured `path`, never by a path from the call. Events are found by `uid` among the `.ics` files of that directory only (directories, other files and files over 2 MiB are skipped). A new series gets a plain file name (letters, digits, `._@-`) and never overwrites an existing file. Writes go to a temporary file in the same directory and are renamed over the old one.
+
 ### Default calendar
 When a `new_event` call names no `calendar`, the event goes to `defaultCalendar` from the config. It is required when khal has several calendars and optional when it has exactly one (that one is then used). The server checks at startup that khal has the calendar, and it always passes the calendar to khal explicitly: khal's own `default_calendar` is never relied on (without one, `khal new` fails at once with exit code 2; it does not prompt). The order in which khal lists calendars is irrelevant; calendar names are shown sorted.
 

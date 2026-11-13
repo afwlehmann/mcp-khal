@@ -68,9 +68,12 @@ describe("tools that change existing events (in process)", () => {
     });
     expect(missing.error).toBe(true);
     expect(missing.text).toMatch(/^InvalidInput: no event with uid 'nope'/);
-    const badDate = await call("end_event_series", { calendar: "work", uid: "u1", last_date: "soon" });
-    expect(badDate.error).toBe(true);
-    expect(badDate.text).toMatch(/real date/);
+    const badShape = await call("end_event_series", { calendar: "work", uid: "u1", last_date: "soon" });
+    expect(badShape.error).toBe(true);
+    expect(badShape.text).toMatch(/YYYY-MM-DD/);
+    const notADate = await call("end_event_series", { calendar: "work", uid: "u1", last_date: "2030-02-31" });
+    expect(notADate.error).toBe(true);
+    expect(notADate.text).toMatch(/real date/);
   });
 
   it("respond_to_event answers an invitation, or reports why it cannot", async () => {

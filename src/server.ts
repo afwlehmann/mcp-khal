@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Effect } from "effect";
 import { z } from "zod";
-import { updateEvent } from "./editEvent.js";
+import { MAX_DESCRIPTION, MAX_TITLE, updateEvent } from "./editEvent.js";
 import { endSeries } from "./endSeries.js";
 import type { KhalError } from "./errors.js";
 import { calendarsArgs, execute, listArgs, parseEvents, rangeArgs, searchArgs } from "./khal.js";
@@ -9,6 +9,7 @@ import { newEvent } from "./newEvent.js";
 import { RecurrenceSpec } from "./recurrence.js";
 import { respondToEvent } from "./respondEvent.js";
 import type { Settings } from "./settings.js";
+import { MAX_NAME } from "./vdir.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -28,6 +29,9 @@ const respond = <A>(eff: Effect.Effect<A, KhalError>, render: (a: A) => string):
 
 const plain = (s: string): string => s;
 const json = (v: unknown): string => JSON.stringify(v, null, 2);
+
+/** A calendar day as the tools take it; the pure functions check that it is a real date. */
+const DAY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD");
 
 /** Sources of non-determinism, passed in so the server itself reads no global state. */
 export interface ServerDeps {
@@ -73,11 +77,11 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
         .describe(
           "Calendar name (see list_calendars). Omit it to use the server's configured default calendar (khal's own default calendar is never used)",
         ),
-      start: z.string(),
-      end: z.string().optional(),
-      summary: z.string(),
-      location: z.string().optional(),
-      description: z.string().optional(),
+      start: z.string().max(64),
+      end: z.string().max(64).optional(),
+      summary: z.string().max(MAX_TITLE),
+      location: z.string().max(MAX_TITLE).optional(),
+      description: z.string().max(MAX_DESCRIPTION).optional(),
       alarm: z
         .string()
         .optional()
@@ -103,23 +107,20 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
     "update_event",
     "WRITE OPERATION: this changes an existing event in the user's calendar and cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and exactly what changes). Edits the event's .ics file, so the calendar needs a `path` in the server's config. Identify the event by `calendar` and `uid` (both are in the output of the read tools). Only the given fields change: summary, location, description (empty string removes it), and the time via `start` ('YYYY-MM-DD HH:MM') together with `end` ('HH:MM' on the same day). For a recurring event choose with `scope` what changes: 'all' (default: the whole series, moving it too), 'instance' (only the occurrence on `date`; it may be moved to another day) or 'from_date' (the occurrence on `date` and all after it: the series is split, the old part ends before `date`, the rest is a new series with a new uid; only the time of day can change, not the date). `instance` and `from_date` need `date` ('YYYY-MM-DD') of an existing occurrence. The times are in the event's own time zone (UTC for an event stored in UTC). All-day events cannot be moved. A series with exceptions cannot be moved as a whole, and 'from_date' refuses a series with exceptions on or after `date`. Attendees are not changed and no invitation update is sent. If the new summary contains '/', the result carries a warning about CalDAV synchronization; pass it on to the user.",
     {
-      calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
-      uid: z.string().describe("The event's `uid` from the read tools"),
+      calendar: z.string().max(MAX_NAME).describe("Calendar name (see list_calendars) the event is in"),
+      uid: z.string().max(MAX_NAME).describe("The event's `uid` from the read tools"),
       scope: z
         .enum(["all", "instance", "from_date"])
         .optional()
         .describe(
           "Recurring events: 'all' (default), only the occurrence on `date`, or `date` and all after it",
         ),
-      date: z
-        .string()
-        .optional()
-        .describe("'YYYY-MM-DD' of the occurrence, for scope 'instance' and 'from_date'"),
-      summary: z.string().optional(),
-      location: z.string().optional(),
-      description: z.string().optional(),
-      start: z.string().optional().describe("New start 'YYYY-MM-DD HH:MM'; needs `end`"),
-      end: z.string().optional().describe("New end 'HH:MM' on the day of `start`; needs `start`"),
+      date: DAY.optional().describe("'YYYY-MM-DD' of the occurrence, for scope 'instance' and 'from_date'"),
+      summary: z.string().max(MAX_TITLE).optional(),
+      location: z.string().max(MAX_TITLE).optional(),
+      description: z.string().max(MAX_DESCRIPTION).optional(),
+      start: z.string().max(32).optional().describe("New start 'YYYY-MM-DD HH:MM'; needs `end`"),
+      end: z.string().max(32).optional().describe("New end 'HH:MM' on the day of `start`; needs `start`"),
     },
     (p) => respond(updateEvent(settings, p, deps.uid(), deps.now()), plain),
   );
@@ -128,9 +129,9 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
     "end_event_series",
     "WRITE OPERATION: this ends a recurring event in the user's calendar: every occurrence after `last_date` disappears, and it cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and its new last day). Edits the event's .ics file, so the calendar needs a `path` in the server's config. Identify the event by `calendar` and `uid` (both are in the output of the read tools). `last_date` ('YYYY-MM-DD') is the last occurrence that stays; it must be an existing occurrence after the first one (use update_event to change a series, nothing here deletes a whole event). Exceptions after `last_date` are dropped; no cancellation is sent to attendees.",
     {
-      calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
-      uid: z.string().describe("The event's `uid` from the read tools"),
-      last_date: z.string().describe("'YYYY-MM-DD' of the last occurrence that stays"),
+      calendar: z.string().max(MAX_NAME).describe("Calendar name (see list_calendars) the event is in"),
+      uid: z.string().max(MAX_NAME).describe("The event's `uid` from the read tools"),
+      last_date: DAY.describe("'YYYY-MM-DD' of the last occurrence that stays"),
     },
     (p) =>
       respond(
@@ -143,14 +144,14 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
     "respond_to_event",
     "WRITE OPERATION: this changes the user's own participation status (accept, decline or tentative) on an invitation in their calendar and cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and the answer). Edits the event's .ics file, so the calendar needs a `path` in the server's config; the user's address is the calendar's configured `email`, which must be among the event's attendees. Identify the event by `calendar` and `uid` (both are in the output of the read tools). For a recurring event `scope` is 'all' (default) or 'instance' (only the occurrence on `date`, 'YYYY-MM-DD'). khal sends nothing: the organizer is not notified unless the user's sync or mail tooling does that, so tell the user so.",
     {
-      calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
-      uid: z.string().describe("The event's `uid` from the read tools"),
+      calendar: z.string().max(MAX_NAME).describe("Calendar name (see list_calendars) the event is in"),
+      uid: z.string().max(MAX_NAME).describe("The event's `uid` from the read tools"),
       response: z.enum(["accepted", "declined", "tentative"]),
       scope: z
         .enum(["all", "instance"])
         .optional()
         .describe("Recurring events: 'all' (default) or one occurrence"),
-      date: z.string().optional().describe("'YYYY-MM-DD' of the occurrence, for scope 'instance'"),
+      date: DAY.optional().describe("'YYYY-MM-DD' of the occurrence, for scope 'instance'"),
     },
     (p) => respond(respondToEvent(settings, p, deps.now()), plain),
   );

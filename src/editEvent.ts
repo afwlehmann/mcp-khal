@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { Effect, Result } from "effect";
 import { InvalidInput, type KhalError } from "./errors.js";
 import { type Event, events, isMaster, mapEvents, prop, setProp, touch } from "./ics.js";
@@ -19,7 +19,7 @@ import {
   withUntil,
 } from "./series.js";
 import type { Settings } from "./settings.js";
-import { findEvent, writeEvent } from "./vdir.js";
+import { createEvent, findEvent, newFileIn, writeEvent } from "./vdir.js";
 
 type V<A> = Result.Result<A, InvalidInput>;
 
@@ -74,13 +74,19 @@ const parseTimes = (start: string, end: string): V<Times> => {
   return Result.succeed({ date, start: `${s[2]}${s[3]}00`, end: `${e[1]}${e[2]}00` });
 };
 
+/** Longest summary, location and description accepted (characters). */
+export const MAX_TITLE = 1_000;
+export const MAX_DESCRIPTION = 20_000;
+
 /** A text change: `undefined` leaves the property alone, null removes it. */
 const textChange = (
   field: string,
   v: string | undefined,
   allowEmpty: boolean,
+  max: number,
 ): V<string | null | undefined> => {
   if (v === undefined) return Result.succeed(undefined);
+  if (v.length > max) return fail(`${field} must not be longer than ${max} characters`);
   if (v.trim() === "") return allowEmpty ? Result.succeed(null) : fail(`${field} must not be empty`);
   return textField(field, v);
 };
@@ -92,9 +98,9 @@ const parseChanges = (p: UpdateParams): V<Changes> =>
     if ((p.start === undefined) !== (p.end === undefined))
       return yield* fail("start and end must be given together");
     return {
-      summary: yield* textChange("summary", p.summary, false),
-      location: yield* textChange("location", p.location, true),
-      description: yield* textChange("description", p.description, true),
+      summary: yield* textChange("summary", p.summary, false, MAX_TITLE),
+      location: yield* textChange("location", p.location, true, MAX_TITLE),
+      description: yield* textChange("description", p.description, true, MAX_DESCRIPTION),
       times: p.start !== undefined && p.end !== undefined ? yield* parseTimes(p.start, p.end) : undefined,
     };
   });
@@ -104,6 +110,8 @@ export const scopeOf = (p: {
   date?: string | undefined;
 }): V<{ scope: Scope; date: string | undefined }> => {
   const scope = p.scope ?? "all";
+  if (!["all", "instance", "from_date"].includes(scope))
+    return fail("scope must be 'all', 'instance' or 'from_date'");
   if (scope === "all")
     return p.date === undefined
       ? Result.succeed({ scope, date: undefined })
@@ -362,9 +370,11 @@ export const updateEvent = (
             (d) => d < iso,
           ).length;
     const newId = `${newUid}@mcp-khal`;
+    const newFile = newFileIn(dirname(stored.file), `${newId}.ics`);
+    if (typeof newFile !== "string") return yield* Effect.fail(newFile);
     const split = yield* Effect.fromResult(splitSeries(stored.lines, p, newId, now, before));
     // the new series first: a failure in between leaves a duplicate, never a lost event
-    yield* writeEvent(join(dirname(stored.file), `${newId}.ics`), split.created);
+    yield* createEvent(newFile, split.created);
     yield* writeEvent(stored.file, split.original);
     return done(
       `Updated event ${uid} ${where} from ${iso} on: the old series now ends before that day, the following events are a new series with uid ${newId}.`,
