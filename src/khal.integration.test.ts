@@ -434,6 +434,81 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(triggers(await storedIcs("work", "Planning v2"))).toEqual(["-PT30M"]);
     });
 
+    const weekly = async (summary: string): Promise<string> => {
+      const r = await call("new_event", {
+        calendar: "work",
+        start: "2030-04-02 09:00",
+        end: "09:30",
+        summary,
+        alarm: "none",
+        recurrence: {
+          pattern: { kind: "weekly", weekdays: ["tuesday"] },
+          ending: { kind: "count", count: 4 },
+        },
+      });
+      expect(r.error, r.text).toBe(false);
+      return uidOf(summary, "2030-04-02");
+    };
+    const april = async (...titles: string[]): Promise<string[]> =>
+      (await events("list_events", { range: "2030-04-01 2030-04-30", calendar: "work" }))
+        .filter((e) => titles.includes(e.title))
+        .map((e) => `${e.startDate} ${e.startTime} ${e.title}`)
+        .sort();
+
+    it("update_event with scope instance changes one occurrence of a series", async () => {
+      const uid = await weekly("Weekly sync");
+      const r = await call("update_event", {
+        calendar: "work",
+        uid,
+        scope: "instance",
+        date: "2030-04-09",
+        summary: "One-off",
+        start: "2030-04-10 15:00",
+        end: "16:00",
+      });
+      expect(r.error, r.text).toBe(false);
+      expect(await april("Weekly sync", "One-off")).toEqual([
+        "2030-04-02 09:00 Weekly sync",
+        "2030-04-10 15:00 One-off",
+        "2030-04-16 09:00 Weekly sync",
+        "2030-04-23 09:00 Weekly sync",
+      ]);
+      // asking for a day that is not an occurrence is refused
+      const no = await call("update_event", {
+        calendar: "work",
+        uid,
+        scope: "instance",
+        date: "2030-04-11",
+        summary: "x",
+      });
+      expect(no.error).toBe(true);
+      expect(no.text).toMatch(/no occurrence on 2030-04-11/);
+    });
+
+    it("update_event with scope from_date splits a series, keeping its length", async () => {
+      const uid = await weekly("Weekly review");
+      const r = await call("update_event", {
+        calendar: "work",
+        uid,
+        scope: "from_date",
+        date: "2030-04-16",
+        summary: "Review later",
+        start: "2030-04-16 11:00",
+        end: "11:30",
+      });
+      expect(r.error, r.text).toBe(false);
+      expect(await april("Weekly review", "Review later")).toEqual([
+        "2030-04-02 09:00 Weekly review",
+        "2030-04-09 09:00 Weekly review",
+        "2030-04-16 11:00 Review later",
+        "2030-04-23 11:00 Review later",
+      ]);
+      // the old series now ends before the split, the rest is a series of its own
+      const ended = await storedIcs("work", "Weekly review");
+      expect(ended).toMatch(/RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20300416T085959/);
+      expect(await storedIcs("work", "Review later")).toMatch(/RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=2/);
+    });
+
     it("update_event on a calendar of another event does not find it", async () => {
       const uid = await uidOf("Planning v2", "2030-03-05");
       const r = await call("update_event", { calendar: "home", uid, summary: "x" });

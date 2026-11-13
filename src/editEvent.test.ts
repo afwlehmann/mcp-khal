@@ -178,7 +178,7 @@ describe("vdir and updateEvent", () => {
 
   it("rewrites only the event's file, atomically, and leaves no temporary file", async () => {
     const before = await readFile(join(vdir, "b.ics"), "utf8");
-    const out = await runOk(updateEvent(settings(), { ...base, summary: "Plan A/B" }, NOW));
+    const out = await runOk(updateEvent(settings(), { ...base, summary: "Plan A/B" }, "n1", NOW));
     expect(out).toMatch(/^Updated event u1 in calendar work\./);
     expect(out).toMatch(/WARNING: .*CalDAV/);
     const after = unfoldLines(await readFile(join(vdir, "a.ics"), "utf8"));
@@ -188,10 +188,16 @@ describe("vdir and updateEvent", () => {
   });
 
   it("gives no warning for a harmless title and writes nothing when the change is invalid", async () => {
-    expect(await runOk(updateEvent(settings(), { ...base, summary: "Plan" }, NOW))).not.toMatch(/WARNING/);
+    expect(await runOk(updateEvent(settings(), { ...base, summary: "Plan" }, "n1", NOW))).not.toMatch(
+      /WARNING/,
+    );
     const before = await readFile(join(vdir, "a.ics"), "utf8");
-    expect((await runFail(updateEvent(settings(), { ...base, start: "x" }, NOW)))._tag).toBe("InvalidInput");
+    expect((await runFail(updateEvent(settings(), { ...base, start: "x" }, "n1", NOW)))._tag).toBe(
+      "InvalidInput",
+    );
     expect(await readFile(join(vdir, "a.ics"), "utf8")).toBe(before);
-    expect(await runOk(updateEvent(settings(), { ...base, location: "Hall" }, NOW))).toMatch(/^Updated/);
+    expect(await runOk(updateEvent(settings(), { ...base, location: "Hall" }, "n1", NOW))).toMatch(
+      /^Updated/,
+    );
   });
 });

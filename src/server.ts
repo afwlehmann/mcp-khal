@@ -99,17 +99,27 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
 
   server.tool(
     "update_event",
-    "WRITE OPERATION: this changes an existing event in the user's calendar and cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and exactly what changes). Edits the event's .ics file, so the calendar needs a `path` in the server's config. Identify the event by `calendar` and `uid` (both are in the output of the read tools). Only the given fields change: summary, location, description (empty string removes it), and the time via `start` ('YYYY-MM-DD HH:MM') together with `end` ('HH:MM' on the same day); for a series that moves the whole series. The times are in the event's own time zone (UTC for an event stored in UTC). All-day events cannot be moved, nor series with exceptions. Attendees are not changed and no invitation update is sent. If the new summary contains '/', the result carries a warning about CalDAV synchronization; pass it on to the user.",
+    "WRITE OPERATION: this changes an existing event in the user's calendar and cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and exactly what changes). Edits the event's .ics file, so the calendar needs a `path` in the server's config. Identify the event by `calendar` and `uid` (both are in the output of the read tools). Only the given fields change: summary, location, description (empty string removes it), and the time via `start` ('YYYY-MM-DD HH:MM') together with `end` ('HH:MM' on the same day). For a recurring event choose with `scope` what changes: 'all' (default: the whole series, moving it too), 'instance' (only the occurrence on `date`; it may be moved to another day) or 'from_date' (the occurrence on `date` and all after it: the series is split, the old part ends before `date`, the rest is a new series with a new uid; only the time of day can change, not the date). `instance` and `from_date` need `date` ('YYYY-MM-DD') of an existing occurrence. The times are in the event's own time zone (UTC for an event stored in UTC). All-day events cannot be moved. A series with exceptions cannot be moved as a whole, and 'from_date' refuses a series with exceptions on or after `date`. Attendees are not changed and no invitation update is sent. If the new summary contains '/', the result carries a warning about CalDAV synchronization; pass it on to the user.",
     {
       calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
       uid: z.string().describe("The event's `uid` from the read tools"),
+      scope: z
+        .enum(["all", "instance", "from_date"])
+        .optional()
+        .describe(
+          "Recurring events: 'all' (default), only the occurrence on `date`, or `date` and all after it",
+        ),
+      date: z
+        .string()
+        .optional()
+        .describe("'YYYY-MM-DD' of the occurrence, for scope 'instance' and 'from_date'"),
       summary: z.string().optional(),
       location: z.string().optional(),
       description: z.string().optional(),
       start: z.string().optional().describe("New start 'YYYY-MM-DD HH:MM'; needs `end`"),
       end: z.string().optional().describe("New end 'HH:MM' on the day of `start`; needs `start`"),
     },
-    (p) => respond(updateEvent(settings, p, deps.now()), plain),
+    (p) => respond(updateEvent(settings, p, deps.uid(), deps.now()), plain),
   );
 
   return server;
