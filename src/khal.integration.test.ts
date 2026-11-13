@@ -630,6 +630,8 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
         question: async (q: string) => {
           asked.push(q);
           if (q.startsWith("Calendar for new events")) return "work";
+          if (q.startsWith("Folder of the .ics files"))
+            return q.includes("'home'") ? "" : join(root, "calendars", "work");
           return q.includes("'home'") ? "me@home.org" : "me@work.com";
         },
         write: () => {},
@@ -649,12 +651,16 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       );
 
       expect(code).toBe(0);
-      expect(asked).toHaveLength(3);
-      expect(asked[2]).toContain("home, work");
+      // two addresses, two paths (home is skipped), then the default calendar
+      expect(asked).toHaveLength(5);
+      expect(asked[4]).toContain("home, work");
       expect(await runOk(loadConfig(setupConfig))).toEqual({
         khal: "khal",
         defaultCalendar: "work",
-        calendars: { home: { email: "me@home.org" }, work: { email: "me@work.com" } },
+        calendars: {
+          home: { email: "me@home.org" },
+          work: { email: "me@work.com", path: join(root, "calendars", "work") },
+        },
       });
     });
   });

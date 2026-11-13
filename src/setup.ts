@@ -4,6 +4,7 @@ import {
   type CalendarConfig,
   type Calendars,
   interpretAnswer,
+  interpretPath,
   isEmail,
   loadConfig,
   parseCalendarNames,
@@ -80,7 +81,7 @@ export const promptDefaultCalendar = (
 /**
  * Steps through the calendars, prefilling each prompt with the calendar's configured address.
  * Only the address is asked for and changed; everything else configured for a calendar (its
- * reminder) and every calendar khal no longer has stay as they are.
+ * reminder, its path) and every calendar khal no longer has stay as they are.
  */
 export const configure = (
   rl: Interface,
@@ -95,6 +96,52 @@ export const configure = (
       return Effect.map(
         promptFor(rl, name, current?.email),
         (email): Calendars => (email === undefined ? acc : { ...acc, [name]: { ...current, email } }),
+      );
+    },
+  );
+
+/**
+ * Asks for the directory of a calendar's .ics files (needed by the tools that change existing
+ * events). Blank keeps the configured one, or skips. Re-prompts until the answer is valid.
+ */
+export const promptPath = (
+  rl: Interface,
+  calendar: string,
+  current: string | undefined,
+  taken: readonly string[],
+): Effect.Effect<string | undefined, KhalError> => {
+  const loop: Effect.Effect<string | undefined, KhalError> = Effect.flatMap(
+    ask(rl, `Folder of the .ics files of '${calendar}'${current ? "" : " (blank to skip)"}: `, current),
+    (answer) =>
+      Result.match(interpretPath(answer, current, taken), {
+        onFailure: (msg): Effect.Effect<string | undefined, KhalError> =>
+          Effect.flatMap(
+            Effect.sync(() => console.error(`  ${msg}`)),
+            () => loop,
+          ),
+        onSuccess: (path): Effect.Effect<string | undefined, KhalError> => Effect.succeed(path),
+      }),
+  );
+  return loop;
+};
+
+/** Steps through the calendars asking for their paths; nothing else about a calendar changes. */
+export const configurePaths = (
+  rl: Interface,
+  names: readonly string[],
+  existing: Calendars,
+): Effect.Effect<Calendars, KhalError> =>
+  Effect.reduce(
+    names,
+    (): Calendars => existing,
+    (acc, name) => {
+      const current: CalendarConfig | undefined = Object.hasOwn(acc, name) ? acc[name] : undefined;
+      const taken = Object.entries(acc).flatMap(([n, c]) =>
+        n !== name && c.path !== undefined ? [c.path] : [],
+      );
+      return Effect.map(
+        promptPath(rl, name, current?.path, taken),
+        (path): Calendars => (path === undefined ? acc : { ...acc, [name]: { ...current, path } }),
       );
     },
   );
@@ -123,7 +170,8 @@ export const setup = (settings: Settings, io: SetupIo): Effect.Effect<void, Khal
       Effect.sync(io.openPrompt),
       (rl) =>
         Effect.gen(function* () {
-          const calendars = yield* configure(rl, names, existing.calendars);
+          const withEmails = yield* configure(rl, names, existing.calendars);
+          const calendars = yield* configurePaths(rl, names, withEmails);
           // with one calendar that is the default and nothing is written; with several it is required
           const defaultCalendar =
             names.length > 1 ? yield* promptDefaultCalendar(rl, names, existing.defaultCalendar) : undefined;

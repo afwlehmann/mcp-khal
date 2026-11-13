@@ -86,7 +86,7 @@ MCP client config:
 ```
 npm run setup        # or: node dist/cli.js setup
 ```
-Lists your khal calendars and asks for your email address on each; the answer is saved as that calendar's `email` in the config file (see below). Existing addresses are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. When khal has several calendars it then asks for the calendar new events go to (`defaultCalendar`, prefilled with the configured one; it must be one of them). Rerun any time: everything else in the file (`khal`, the reminders of the calendars, calendars khal no longer has) is preserved.
+Lists your khal calendars and asks for your email address on each; the answer is saved as that calendar's `email` in the config file (see below). It then asks for the folder of each calendar's `.ics` files (`path`, prefilled with the configured one, blank to skip), which the tools that change existing events need; an answer must be an absolute path that no other calendar uses. Existing addresses are prefilled (editable) on each line; otherwise a calendar whose name is an email address is prefilled with that name. Submit blank on an empty line to skip. When khal has several calendars it then asks for the calendar new events go to (`defaultCalendar`, prefilled with the configured one; it must be one of them). Rerun any time: everything else in the file (`khal`, the reminders of the calendars, calendars khal no longer has) is preserved.
 
 ### Configuration
 The server reads its environment and one JSON config file once, at startup. Nothing is re-read while it runs, so restart it after changing either.

@@ -2,10 +2,18 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Interface } from "node:readline/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadConfig, serializeConfig } from "./config.js";
+import { interpretPath, loadConfig, serializeConfig } from "./config.js";
 import { InvalidInput } from "./errors.js";
-import { configure, promptDefaultCalendar, promptFor, runSetup, setup } from "./setup.js";
-import { type FakeKhal, fakeKhal, removeDir, runFail, runOk, tempDir } from "./testlib.js";
+import {
+  configure,
+  configurePaths,
+  promptDefaultCalendar,
+  promptFor,
+  promptPath,
+  runSetup,
+  setup,
+} from "./setup.js";
+import { type FakeKhal, failure, fakeKhal, removeDir, runFail, runOk, tempDir, unwrap } from "./testlib.js";
 
 /** A scripted readline: answers come from the queue, prompts and prefills are recorded. */
 const scripted = (answers: readonly string[]) => {
@@ -101,8 +109,8 @@ describe("setup", () => {
         calendars: { work: { email: "old@work.com" } },
       }),
     );
-    // sorted order: me@home.org, work, then the default calendar
-    const s = scripted(["", "", "work"]);
+    // sorted order: the addresses of me@home.org and work, their paths, then the default calendar
+    const s = scripted(["", "", "", "", "work"]);
     const t = io(s);
     await runOk(setup(fake.settings({ configPath: path }), t.io));
     // the configured khal location survives a rerun of setup
@@ -112,7 +120,7 @@ describe("setup", () => {
       calendars: { work: { email: "old@work.com" }, "me@home.org": { email: "me@home.org" } },
     });
     expect(s.prefills).toEqual(["me@home.org", "old@work.com"]);
-    expect(s.questions).toHaveLength(3);
+    expect(s.questions).toHaveLength(5);
     expect(t.closed()).toBe(1);
     expect(t.lines.join("\n")).toMatch(/Configuring 2 calendar\(s\)/);
     expect(t.lines.join("\n")).toMatch(/Saved 2 calendar\(s\)/);
@@ -130,7 +138,7 @@ describe("setup", () => {
     );
     // work keeps its address, the second calendar (me@home.org) is new, home is not asked about;
     // the default calendar is prefilled with "work" and confirmed with a blank answer
-    await runOk(setup(fake.settings({ configPath: path }), io(scripted(["", "", ""])).io));
+    await runOk(setup(fake.settings({ configPath: path }), io(scripted(["", "", "", "", ""])).io));
     expect(await runOk(loadConfig(path))).toEqual({
       khal: "khal",
       defaultCalendar: "work",
@@ -146,7 +154,7 @@ describe("setup", () => {
     const path = join(dir, "cfg.json");
     await writeFile(path, serializeConfig({ khal: "khal", calendars: {} }));
     const settings = fake.settings({ configPath: path, khalSource: "MCP_KHAL_BIN" });
-    await runOk(setup(settings, io(scripted(["", "", "work"])).io));
+    await runOk(setup(settings, io(scripted(["", "", "", "", "work"])).io));
     expect((await runOk(loadConfig(path))).khal).toBe("khal");
   });
 
@@ -154,9 +162,9 @@ describe("setup", () => {
     const path = join(dir, "cfg.json");
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const s = scripted(["", "", "nope", "  ", "work"]);
+      const s = scripted(["", "", "", "", "nope", "  ", "work"]);
       await runOk(setup(fake.settings({ configPath: path }), io(s).io));
-      expect(s.questions).toHaveLength(5);
+      expect(s.questions).toHaveLength(7);
       expect(spy).toHaveBeenCalledTimes(2);
       expect((await runOk(loadConfig(path))).defaultCalendar).toBe("work");
     } finally {
@@ -169,9 +177,9 @@ describe("setup", () => {
     try {
       const path = join(dir, "cfg.json");
       await writeFile(path, serializeConfig({ khal: "khal", defaultCalendar: "work", calendars: {} }));
-      const s = scripted(["me@work.com"]);
+      const s = scripted(["me@work.com", ""]);
       await runOk(setup(one.settings({ configPath: path }), io(s).io));
-      expect(s.questions).toHaveLength(1);
+      expect(s.questions).toHaveLength(2);
       expect(await runOk(loadConfig(path))).toEqual({
         khal: "khal",
         calendars: { work: { email: "me@work.com" } },
@@ -222,7 +230,7 @@ describe("runSetup", () => {
   });
 
   it("returns 0 after saving the mapping at the path named by the environment it is given", async () => {
-    const s = scripted(["me@work.com"]);
+    const s = scripted(["me@work.com", ""]);
     const lines: string[] = [];
     const rl = Object.assign(s.rl, { close: () => {} });
     const code = await runSetup(
@@ -260,6 +268,72 @@ describe("runSetup", () => {
     );
     expect(code).toBe(1);
     expect(errors[0]).toMatch(/^InvalidInput:/);
+  });
+});
+
+describe("promptPath", () => {
+  it("prefills the configured path and keeps it on a blank answer", async () => {
+    const s = scripted([""]);
+    expect(await runOk(promptPath(s.rl, "work", "/data/work", []))).toBe("/data/work");
+    expect(s.prefills).toEqual(["/data/work"]);
+    expect(s.questions[0]).not.toMatch(/blank to skip/);
+  });
+
+  it("offers to skip, and returns undefined on blank, when no path is known", async () => {
+    const s = scripted([""]);
+    expect(await runOk(promptPath(s.rl, "work", undefined, []))).toBeUndefined();
+    expect(s.questions[0]).toMatch(/blank to skip/);
+    expect(s.prefills).toEqual([]);
+  });
+
+  it("re-prompts until the answer is an absolute path that no other calendar uses", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const s = scripted(["~/cal", "relative/dir", "/data/home/", " /data/work "]);
+      expect(await runOk(promptPath(s.rl, "work", undefined, ["/data/home"]))).toBe("/data/work");
+      expect(s.questions).toHaveLength(4);
+      expect(errors).toHaveBeenCalledTimes(3);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});
+
+describe("interpretPath", () => {
+  it("keeps the fallback on blank and rejects unusable paths", () => {
+    expect(unwrap(interpretPath("  ", "/a", []))).toBe("/a");
+    expect(unwrap(interpretPath("", undefined, []))).toBeUndefined();
+    expect(failure(interpretPath("a\u0007b", undefined, []))).toMatch(/not an absolute path/);
+    expect(failure(interpretPath("/x", undefined, ["/x/../x"]))).toMatch(/already the path of another/);
+  });
+});
+
+describe("configurePaths", () => {
+  it("fills in paths, skips blanks, and leaves everything else of a calendar alone", async () => {
+    const s = scripted(["/data/a", "", "/data/c"]);
+    const result = await runOk(
+      configurePaths(s.rl, ["a", "b", "c"], {
+        a: { email: "a@y.com", alarm: "1d" },
+        gone: { path: "/data/g" },
+      }),
+    );
+    expect(result).toEqual({
+      a: { email: "a@y.com", alarm: "1d", path: "/data/a" },
+      c: { path: "/data/c" },
+      gone: { path: "/data/g" },
+    });
+  });
+
+  it("treats the paths of the other calendars, including ones khal no longer has, as taken", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const s = scripted(["/data/g", "/data/a"]);
+      const result = await runOk(configurePaths(s.rl, ["a"], { gone: { path: "/data/g" } }));
+      expect(result).toEqual({ a: { path: "/data/a" }, gone: { path: "/data/g" } });
+      expect(errors).toHaveBeenCalledTimes(1);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });
 

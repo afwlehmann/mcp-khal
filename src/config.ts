@@ -380,6 +380,24 @@ export const interpretAnswer = (
   return isEmail(a) ? Result.succeed(a) : Result.fail(`'${a}' is not a valid email address`);
 };
 
+/**
+ * Answer to the setup prompt for a calendar's vdir path: blank keeps the default (or skips),
+ * otherwise it must be an absolute path that no other calendar uses.
+ */
+export const interpretPath = (
+  answer: string,
+  fallback: string | undefined,
+  taken: readonly string[],
+): Result.Result<string | undefined, string> => {
+  const a = answer.trim();
+  if (a === "") return Result.succeed(fallback);
+  if (!isAbsolute(a) || CONTROL.test(a))
+    return Result.fail(`'${a}' is not an absolute path (no '~', no relative path)`);
+  return taken.some((t) => resolve(t) === resolve(a))
+    ? Result.fail(`'${a}' is already the path of another calendar`)
+    : Result.succeed(a);
+};
+
 /** Which address represents the user on this calendar? Explicit > its config > email-like name. */
 export const resolveAddress = (
   calendars: Calendars,
