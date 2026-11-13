@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Effect } from "effect";
 import { z } from "zod";
+import { updateEvent } from "./editEvent.js";
 import type { KhalError } from "./errors.js";
 import { calendarsArgs, execute, listArgs, parseEvents, rangeArgs, searchArgs } from "./khal.js";
 import { newEvent } from "./newEvent.js";
@@ -94,6 +95,21 @@ export const createServer = (settings: Settings, deps: ServerDeps): McpServer =>
         ),
     },
     (p) => respond(newEvent(settings, p, deps.uid(), deps.now()), plain),
+  );
+
+  server.tool(
+    "update_event",
+    "WRITE OPERATION: this changes an existing event in the user's calendar and cannot be undone (the previous version is not kept). Ask the user for confirmation before calling it (show the event and exactly what changes). Edits the event's .ics file, so the calendar needs a `path` in the server's config. Identify the event by `calendar` and `uid` (both are in the output of the read tools). Only the given fields change: summary, location, description (empty string removes it), and the time via `start` ('YYYY-MM-DD HH:MM') together with `end` ('HH:MM' on the same day); for a series that moves the whole series. The times are in the event's own time zone (UTC for an event stored in UTC). All-day events cannot be moved, nor series with exceptions. Attendees are not changed and no invitation update is sent. If the new summary contains '/', the result carries a warning about CalDAV synchronization; pass it on to the user.",
+    {
+      calendar: z.string().describe("Calendar name (see list_calendars) the event is in"),
+      uid: z.string().describe("The event's `uid` from the read tools"),
+      summary: z.string().optional(),
+      location: z.string().optional(),
+      description: z.string().optional(),
+      start: z.string().optional().describe("New start 'YYYY-MM-DD HH:MM'; needs `end`"),
+      end: z.string().optional().describe("New end 'HH:MM' on the day of `start`; needs `start`"),
+    },
+    (p) => respond(updateEvent(settings, p, deps.now()), plain),
   );
 
   return server;

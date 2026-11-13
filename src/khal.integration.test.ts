@@ -104,7 +104,10 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
         khal: "khal",
         // work has its own reminder and takes the events that name no calendar; home has none
         defaultCalendar: "work",
-        calendars: { work: { email: "me@work.com", alarm: "30m" }, home: { alarm: "none" } },
+        calendars: {
+          work: { email: "me@work.com", alarm: "30m", path: join(root, "calendars", "work") },
+          home: { alarm: "none", path: join(root, "calendars", "home") },
+        },
       }),
     );
 
@@ -383,6 +386,59 @@ describe("mcp-khal with the real khal, entirely inside a temporary directory", (
       expect(trigger).toMatch(ZERO_TRIGGER);
       const listed = await events("list_events", { range: "2030-02-04", calendar: "work" });
       expect(listed.map((e) => e.title)).toContain("Zero series");
+    });
+  });
+
+  describe("changing existing events (their .ics file, read back by khal)", () => {
+    const uidOf = async (title: string, range: string): Promise<string> => {
+      const found = (await events("list_events", { range })).find((e) => e.title === title);
+      expect(found, `${title} is listed`).toBeDefined();
+      return found?.uid ?? "";
+    };
+
+    it("update_event renames and moves an event, and khal lists the new version", async () => {
+      await call("new_event", {
+        calendar: "work",
+        start: "2030-03-04 10:00",
+        end: "11:00",
+        summary: "Planning",
+      });
+      const uid = await uidOf("Planning", "2030-03-04");
+
+      const r = await call("update_event", {
+        calendar: "work",
+        uid,
+        summary: "Planning v2",
+        location: "Room 7",
+        start: "2030-03-05 14:00",
+        end: "15:30",
+      });
+      expect(r.error, r.text).toBe(false);
+
+      // other tests' daily series also run on these days, so look at this event's titles only
+      const planning = async (day: string) =>
+        (await events("list_events", { range: day })).filter(
+          (e) => e.title.startsWith("Planning") && e.startDate === day,
+        );
+      expect(await planning("2030-03-04")).toEqual([]);
+      const [moved, ...rest] = await planning("2030-03-05");
+      expect(rest).toEqual([]);
+      expect(moved).toMatchObject({
+        title: "Planning v2",
+        location: "Room 7",
+        startDate: "2030-03-05",
+        startTime: "14:00",
+        endTime: "15:30",
+        uid,
+      });
+      expect(triggers(await storedIcs("work", "Planning v2"))).toEqual(["-PT30M"]);
+    });
+
+    it("update_event on a calendar of another event does not find it", async () => {
+      const uid = await uidOf("Planning v2", "2030-03-05");
+      const r = await call("update_event", { calendar: "home", uid, summary: "x" });
+      expect(r.error).toBe(true);
+      expect(r.text).toMatch(/no event with uid/);
     });
   });
 

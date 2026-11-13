@@ -206,7 +206,7 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
 const escapeText = (s: string): string =>
   s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
 
-const textField = (field: string, s: string | undefined): V<string | undefined> => {
+export const textField = (field: string, s: string | undefined): V<string | undefined> => {
   if (s === undefined) return Result.succeed(undefined);
   const normalised = s.replace(/\r\n/g, "\n");
   return CONTROL.test(normalised)
@@ -229,7 +229,7 @@ const alarmLines = (alarm: string | undefined): V<string[]> => {
 };
 
 /** RFC 5545 line folding: at most 75 octets per line, continuations start with a space. */
-const fold = (line: string): string => {
+export const fold = (line: string): string => {
   const { done, cur } = [...line].reduce(
     (acc, ch) => {
       const n = Buffer.byteLength(ch);

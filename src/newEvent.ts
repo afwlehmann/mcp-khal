@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { resolveAddress, resolveAlarm, resolveCalendar } from "./config.js";
 import { InvalidInput, type KhalError } from "./errors.js";
+import { stamp } from "./ics.js";
 import { execute, importIcs, type NewParams, newArgs } from "./khal.js";
 import { buildIcs, type RecurrenceSpec, toIcsParams } from "./recurrence.js";
 import type { Settings } from "./settings.js";
@@ -12,11 +13,7 @@ export type NewEventInput = NewParams & {
 };
 
 /** ICS DTSTAMP, e.g. 20261102T100000Z */
-export const timestamp = (now: Date): string =>
-  now
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}/, "");
+export const timestamp = stamp;
 
 /** Advice for the calling agent when a title contains "/", else undefined. */
 export const titleWarning = (summary: string): string | undefined =>
