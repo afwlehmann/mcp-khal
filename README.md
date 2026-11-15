@@ -212,6 +212,16 @@ Version 3.0 is a breaking release: the server no longer runs `khal`.
 - **vdirsyncer stays external.** The server never talks to a CalDAV server; keep syncing with your existing setup.
 - **Output.** The fields of the read tools are unchanged, but the values are now rendered by the server rather than by khal (ISO dates, `HH:MM` times), and search is a plain text match, not an SQL `LIKE`.
 
+## Standards conformance
+
+The server reads and writes iCalendar (RFC 5545) files in vdir layout and follows RFC 5545, 5546, 6868, 4791 and 7986 where they apply. Every requirement is listed in `spec/*.json` and attributed to a test; the generated report is [`docs/conformance.md`](docs/conformance.md).
+
+What we write is standard only: no vendor `X-` properties, no `METHOD` in stored files, CRLF line endings folded at 75 octets, a generated `VTIMEZONE` for every zone used. Unknown properties and components in existing files are kept as they are when an event is edited.
+
+What we tolerate when reading, because real clients produce it (reported where it matters, never copied into what we write): a byte order mark, bare LF or lone CR line breaks, tab folds, `METHOD` in stored files, a missing `PRODID`, Windows zone names such as `W. Europe Standard Time` (mapped to IANA), and a `VTIMEZONE` that disagrees with IANA (the file's own definition wins). Files we cannot handle safely are skipped and listed as problems: invalid UTF-8, several UIDs or component types in one file, unbalanced `BEGIN`/`END`. An event whose `TZID` can be resolved neither from its `VTIMEZONE`, nor as an IANA or Windows zone name is reported as a problem, never treated as floating time.
+
+Events with `CLASS:PRIVATE` or `CLASS:CONFIDENTIAL` are shown by the read tools without details (time and a placeholder title only) and cannot be found by searching their text.
+
 ## Nix / Home Manager
 The flake exposes:
 

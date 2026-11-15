@@ -3,7 +3,7 @@
 Generated from `spec/*.json` and the tests that cite a requirement id (`itReq`). Do not edit by hand:
 `UPDATE_CONFORMANCE=1 npx vitest run src/conformance.meta.test.ts` rewrites it.
 
-Required requirements with a test: **306 of 335**.
+Required requirements with a test: **319 of 319**.
 
 ## rfc5545.json
 
@@ -34,9 +34,9 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5545:3.2.12:partstat-values-match-component`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.12) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/scheduling.test.ts` |
 | [`RFC5545:3.2.12:partstat-default-needs-action`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.12) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC5545:3.2.12:partstat-unknown-as-needs-action`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.12) | MUST | required | `src/conformance/syntax.test.ts` |
-| [`RFC5545:3.2.13:range-only-thisandfuture`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.13) | MUST | required |  |
+| [`RFC5545:3.2.13:range-only-thisandfuture`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.13) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.2.13:thisandprior-not-generated`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.13) | MUST NOT | required | `src/conformance/scheduling.test.ts` |
-| [`RFC5545:3.2.14:related-default-start`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.14) | MUST | required |  |
+| [`RFC5545:3.2.14:related-default-start`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.14) | MUST | n/a: The server never evaluates an alarm trigger. The alarms it writes carry TRIGGER without RELATED, so START applies by default (see RFC5545:3.8.6.3:trigger-default-duration-start); foreign alarms are kept verbatim. |  |
 | [`RFC5545:3.2.16:role-default-req-participant`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.16) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC5545:3.2.17:rsvp-default-false`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.17) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC5545:3.2.18:sent-by-quoted-mailto`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.18) | MUST | required | `src/conformance/scheduling.test.ts`, `src/conformance/syntax.test.ts` |
@@ -69,8 +69,8 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5545:3.3.6:no-leap-seconds-in-duration`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.6) | MUST NOT | required | `src/conformance/expansion.test.ts` |
 | [`RFC5545:3.3.6:duration-component-add-order`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.6) | MUST | required | `src/conformance/expansion.test.ts` |
 | [`RFC5545:3.3.6:nominal-day-dst`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.6) | MUST | required | `src/conformance/expansion.test.ts` |
-| [`RFC5545:3.3.8:integer-range`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.8) | MUST | required |  |
-| [`RFC5545:3.3.8:integer-unsigned-positive`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.8) | MUST | required |  |
+| [`RFC5545:3.3.8:integer-range`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.8) | MUST | required | `src/conformance/alarms-misc.test.ts` |
+| [`RFC5545:3.3.8:integer-unsigned-positive`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.8) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.3.9:period-start-before-end`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.9) | MUST | required | `src/conformance/expansion.test.ts` |
 | [`RFC5545:3.3.9:period-start-positive-duration`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.9) | MUST | required | `src/conformance/expansion.test.ts` |
 | [`RFC5545:3.3.10:freq-required`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.10) | MUST | required | `src/conformance/expansion.test.ts`, `src/conformance/generation.test.ts` |
@@ -121,7 +121,7 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5545:3.3.12:time-hour-range`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.12) | MUST | required | `src/conformance/expansion.test.ts` |
 | [`RFC5545:3.3.12:no-fractional-seconds`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.12) | MUST NOT | required | `src/conformance/expansion.test.ts`, `src/conformance/generation.test.ts` |
 | [`RFC5545:3.3.12:no-utc-offset-time`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.12) | MUST NOT | required | `src/conformance/expansion.test.ts`, `src/conformance/generation.test.ts` |
-| [`RFC5545:3.3.13:uri-generic-syntax`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.13) | MUST | required |  |
+| [`RFC5545:3.3.13:uri-generic-syntax`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.13) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.3.13:uri-param-quoted`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.13) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC5545:3.3.14:utc-offset-plus-for-positive`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.14) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/timezone.test.ts` |
 | [`RFC5545:3.3.14:utc-offset-minus-for-negative`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.14) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/timezone.test.ts` |
@@ -161,10 +161,10 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5545:3.8.1.3:class-default-public`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.3) | MUST | required | `src/conformance/reads.test.ts` |
 | [`RFC5545:3.8.1.3:class-unknown-private`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.3) | MUST | required | `src/conformance/reads.test.ts` |
 | [`RFC5545:3.8.1.11:status-vevent-values`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.11) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/reads.test.ts` |
-| [`RFC5545:3.8.1.11:status-at-most-once`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.11) | MUST | required |  |
+| [`RFC5545:3.8.1.11:status-at-most-once`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.11) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.8.2.7:transp-default-opaque`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.2.7) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/reads.test.ts` |
 | [`RFC5545:3.8.7.2:dtstamp-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.2) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/scheduling.test.ts` |
-| [`RFC5545:3.8.7.1:created-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.1) | MUST | required |  |
+| [`RFC5545:3.8.7.1:created-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.1) | MUST | n/a: The server neither writes nor reads CREATED (new events carry DTSTAMP only); an existing CREATED line is left untouched by edits. |  |
 | [`RFC5545:3.8.7.3:last-modified-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.3) | MUST | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5545:3.8.7.4:sequence-initial-zero`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.4) | MUST | required | `src/conformance/editing.test.ts`, `src/conformance/generation.test.ts` |
 | [`RFC5545:3.8.7.4:sequence-increment-on-revision`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.4) | MUST | required | `src/conformance/scheduling.test.ts` |
@@ -173,27 +173,27 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5545:3.8.4.7:uid-255-octets-no-utf8-truncation`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.7) | MUST | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5545:3.8.4.1:attendee-not-when-publishing`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.1) | MUST NOT | required | `src/conformance/generation.test.ts` |
 | [`RFC5545:3.8.4.1:attendee-params-not-in-valarm`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.1) | MUST NOT | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.8.4.1:attendee-allowed-in-email-valarm`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.1) | MAY | required |  |
+| [`RFC5545:3.8.4.1:attendee-allowed-in-email-valarm`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.1) | MAY | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.8.4.1:delegatee-inherits-rsvp-role`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.1) | MUST | n/a: mcp-khal has no delegation workflow (respond_to_event only changes PARTSTAT of the user's own ATTENDEE line). |  |
 | [`RFC5545:3.8.4.3:organizer-params-preserved`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.3) | MAY | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5545:3.6.6:valarm-action-trigger-required`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.6.6:valarm-audio-attach`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MAY | required |  |
+| [`RFC5545:3.6.6:valarm-audio-attach`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MAY | n/a: We never write AUDIO alarms (only ACTION:DISPLAY) and do not validate the content of a foreign VALARM; its lines, ATTACH included, are preserved verbatim (see RFC5545:3.8.6.1:ignore-unknown-alarm-action). |  |
 | [`RFC5545:3.6.6:valarm-display-description`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.6.6:valarm-email-requirements`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required |  |
-| [`RFC5545:3.6.6:valarm-repeat-needs-duration-and-repeat`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required |  |
-| [`RFC5545:3.6.6:valarm-one-of-repeat-duration-no-repeat`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required |  |
+| [`RFC5545:3.6.6:valarm-email-requirements`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | n/a: We never write EMAIL alarms (only ACTION:DISPLAY) and do not validate the content of a foreign VALARM; it is preserved verbatim. |  |
+| [`RFC5545:3.6.6:valarm-repeat-needs-duration-and-repeat`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | n/a: The server does not fire or schedule alarms and writes no repeating alarm; a foreign REPEAT/DURATION pair is preserved verbatim. |  |
+| [`RFC5545:3.6.6:valarm-one-of-repeat-duration-no-repeat`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | n/a: The server does not fire or schedule alarms, so repetition is never computed; the alarms it writes have neither REPEAT nor DURATION (see RFC5545:3.6.6:valarm-grammar-duration-repeat-pair), foreign ones are preserved verbatim. |  |
 | [`RFC5545:3.6.6:valarm-grammar-duration-repeat-pair`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.8.6.2:repeat-count-additional`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.2) | MUST | required |  |
-| [`RFC5545:3.8.6.1:ignore-unknown-alarm-action`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.1) | MUST | required |  |
+| [`RFC5545:3.8.6.2:repeat-count-additional`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.2) | MUST | n/a: The server neither reads nor writes REPEAT: it writes one non-repeating DISPLAY alarm and keeps foreign alarms verbatim. |  |
+| [`RFC5545:3.8.6.1:ignore-unknown-alarm-action`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.1) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.8.6.1:action-once`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.1) | MUST | required | `src/conformance/generation.test.ts` |
 | [`RFC5545:3.8.6.3:trigger-default-duration-start`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.8.6.3:trigger-sign-before-after`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required |  |
-| [`RFC5545:3.8.6.3:trigger-datetime-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required |  |
+| [`RFC5545:3.8.6.3:trigger-sign-before-after`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | n/a: The server never interprets the sign of a trigger; it writes only negative durations (before the start, see RFC5545:3.8.6.3:trigger-default-duration-start) and keeps foreign alarms verbatim. |  |
+| [`RFC5545:3.8.6.3:trigger-datetime-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | n/a: The server never writes an absolute (DATE-TIME) trigger and does not parse foreign triggers; they are preserved verbatim. |  |
 | [`RFC5545:3.8.6.3:related-invalid-with-datetime`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST NOT | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.8.6.3:date-event-trigger-midnight`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required |  |
+| [`RFC5545:3.8.6.3:date-event-trigger-midnight`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | n/a: The server never computes when an alarm fires; for an all-day event it writes a TRIGGER duration relative to the start and leaves the interpretation to the calendar client. |  |
 | [`RFC5545:3.8.6.3:relative-start-needs-dtstart`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.8.6.3:relative-end-needs-dtend-or-duration`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required |  |
-| [`RFC5545:3.8.6.3:absolute-trigger-recurring-once`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | required |  |
+| [`RFC5545:3.8.6.3:relative-end-needs-dtend-or-duration`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | n/a: The server never writes RELATED=END (its alarms are relative to the start, which every written event has) and does not validate foreign alarms, which are preserved verbatim. |  |
+| [`RFC5545:3.8.6.3:absolute-trigger-recurring-once`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.3) | MUST | n/a: Alarm times are never expanded for a recurring event; the server writes only relative (duration) triggers and keeps foreign absolute ones verbatim. |  |
 | [`RFC5545:3.6.6:valarm-only-in-vevent-vtodo-no-nesting`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | MUST | required | `src/conformance/generation.test.ts` |
 | [`RFC5545:3.6.6:untrusted-alarms-policy`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.6) | policy | deferred: The RFC only gives this as a note; mcp-khal reads only the user's own calendar directories, so no import path from untrusted sources exists. |  |
 | [`RFC5545:3.6.5:vtimezone-tzid-and-observance-required`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/timezone.test.ts` |
@@ -201,12 +201,12 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5545:3.6.5:observance-dtstart-local`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/generation.test.ts`, `src/conformance/timezone.test.ts` |
 | [`RFC5545:3.8.2.4:observance-dtstart-no-tzid`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.2.4) | MUST | required | `src/conformance/generation.test.ts` |
 | [`RFC5545:3.6.5:vtimezone-covers-all-instances`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC5545:3.6.5:vtimezone-unique-definition`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required |  |
+| [`RFC5545:3.6.5:vtimezone-unique-definition`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.6.5:offset-from-last-onset`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/timezone.test.ts` |
 | [`RFC5545:3.6.5:observance-rrule-uses-tzoffsetfrom`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/timezone.test.ts` |
 | [`RFC5545:3.6.5:observance-until-last-onset-utc`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/timezone.test.ts` |
 | [`RFC5545:3.6.5:observance-rdate-local-relative-tzoffsetfrom`](https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5) | MUST | required | `src/conformance/timezone.test.ts` |
-| [`RFC5545:3.8.3.3:tzoffset-sign-semantics`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.3.3) | MUST | required |  |
+| [`RFC5545:3.8.3.3:tzoffset-sign-semantics`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.3.3) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.8.5.3:set-gathering-and-exclusion`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.5.3) | MUST | required | `src/conformance/expansion.test.ts` |
 | [`RFC5545:3.8.5.1:exdate-excludes-dtstart-keep-original`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.5.1) | MUST | required | `src/conformance/expansion.test.ts`, `src/conformance/scheduling.test.ts` |
 | [`RFC5545:3.8.5.1:exdate-precedence-over-rdate`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.5.1) | MUST | required | `src/conformance/expansion.test.ts`, `src/conformance/reads.test.ts` |
@@ -242,7 +242,7 @@ Required requirements with a test: **306 of 335**.
 | [`RFC5546:2.1.4:increment-other-changes`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.4) | MAY | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5546:2.1.4:no-increment-for-reply`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.4) | MUST NOT | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5546:2.1.4:increment-add-cancel`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.4) | MUST | n/a: We do not send iTIP messages (ADD, CANCEL); the stored-object consequence is covered by the RRULE trigger row. |  |
-| [`RFC5546:2.1.5:primary-key-uid-recurrence-id`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.5) | SHOULD | required |  |
+| [`RFC5546:2.1.5:primary-key-uid-recurrence-id`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.5) | SHOULD | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5546:2.1.5:highest-sequence-obsoletes`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.5) | SHOULD | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5546:2.1.5:dtstamp-tiebreaker`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.5) | SHOULD | required | `src/conformance/scheduling.test.ts` |
 | [`RFC5546:2.1.5:persist-key-properties`](https://www.rfc-editor.org/rfc/rfc5546#section-2.1.5) | SHOULD | required | `src/conformance/scheduling.test.ts` |
@@ -311,7 +311,7 @@ Required requirements with a test: **306 of 335**.
 | [`RFC6868:3:unknown-sequence-kept`](https://www.rfc-editor.org/rfc/rfc6868#section-3) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC6868:1:not-backslash-escaping`](https://www.rfc-editor.org/rfc/rfc6868#section-1) | MUST NOT | required | `src/conformance/syntax.test.ts` |
 | [`RFC4791:4.1:one-component-type`](https://www.rfc-editor.org/rfc/rfc4791#section-4.1) | MUST NOT | required | `src/conformance/scheduling.test.ts`, `src/conformance/storage.test.ts` |
-| [`RFC4791:4.1:vtimezone-per-tzid`](https://www.rfc-editor.org/rfc/rfc4791#section-4.1) | MUST | required |  |
+| [`RFC4791:4.1:vtimezone-per-tzid`](https://www.rfc-editor.org/rfc/rfc4791#section-4.1) | MUST | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC4791:4.1:no-method`](https://www.rfc-editor.org/rfc/rfc4791#section-4.1) | MUST NOT | required | `src/conformance/generation.test.ts`, `src/conformance/scheduling.test.ts`, `src/conformance/storage.test.ts` |
 | [`RFC4791:4.1:uid-unique-in-collection`](https://www.rfc-editor.org/rfc/rfc4791#section-4.1) | MUST | required | `src/conformance/generation.test.ts` |
 | [`RFC4791:4.1:different-uid-separate-resource`](https://www.rfc-editor.org/rfc/rfc4791#section-4.1) | MUST | required | `src/conformance/scheduling.test.ts`, `src/conformance/storage.test.ts`, `src/conformance/vendors.test.ts` |
@@ -322,15 +322,15 @@ Required requirements with a test: **306 of 335**.
 | [`RFC4791:5.3.2:ics-suffix`](https://www.rfc-editor.org/rfc/rfc4791#section-5.3.2) | MAY | required | `src/conformance/generation.test.ts` |
 | [`RFC4791:5.3.2:create-only-if-absent`](https://www.rfc-editor.org/rfc/rfc4791#section-5.3.2) | SHOULD | required | `src/conformance/generation.test.ts`, `src/conformance/storage.test.ts` |
 | [`RFC4791:5.3.2.1:no-uid-change-on-overwrite`](https://www.rfc-editor.org/rfc/rfc4791#section-5.3.2.1) | MUST NOT | required | `src/conformance/scheduling.test.ts`, `src/conformance/storage.test.ts` |
-| [`RFC7986:3:value-param-for-new-properties`](https://www.rfc-editor.org/rfc/rfc7986#section-3) | SHOULD | required |  |
+| [`RFC7986:3:value-param-for-new-properties`](https://www.rfc-editor.org/rfc/rfc7986#section-3) | SHOULD | n/a: The server writes none of the properties RFC 7986 adds (COLOR, IMAGE, CONFERENCE, NAME, ...); existing ones are preserved verbatim, VALUE parameters included. |  |
 | [`RFC7986:5.1:name-vcalendar-level`](https://www.rfc-editor.org/rfc/rfc7986#section-5.1) | MAY | required | `src/conformance/scheduling.test.ts`, `src/conformance/syntax.test.ts` |
 | [`RFC7986:5.1:name-one-per-language`](https://www.rfc-editor.org/rfc/rfc7986#section-5.1) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC7986:5.3:uid-no-identifying-data`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | MUST NOT | required | `src/conformance/generation.test.ts` |
-| [`RFC7986:5.3:uid-uuid-recommended`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | SHOULD | required |  |
+| [`RFC7986:5.3:uid-uuid-recommended`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | SHOULD | deferred: The UID is a random UUID v4 (randomUUID at the process edge) followed by the fixed suffix @mcp-khal, which split-off series also use; the value is therefore not a bare UUID. Dropping the suffix is a separate decision. |  |
 | [`RFC7986:5.3:uid-opaque-length`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | MUST | required | `src/conformance/generation.test.ts` |
-| [`RFC7986:5.9:color-once`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MAY | required |  |
-| [`RFC7986:5.9:color-css3-name`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MUST | required |  |
-| [`RFC7986:5.9:color-clients-may-use`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MAY | required |  |
+| [`RFC7986:5.9:color-once`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MAY | n/a: No tool sets a colour: the server never writes COLOR and leaves an existing COLOR line untouched. |  |
+| [`RFC7986:5.9:color-css3-name`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MUST | n/a: The server never generates COLOR and does not interpret colour names, so there is no value to validate; an existing COLOR is preserved verbatim. |  |
+| [`RFC7986:5.9:color-clients-may-use`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MAY | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC7986:5.10:image-media-type`](https://www.rfc-editor.org/rfc/rfc7986#section-5.10) | MUST | required | `src/conformance/scheduling.test.ts`, `src/conformance/syntax.test.ts` |
 | [`RFC7986:5.10:image-value-encoding`](https://www.rfc-editor.org/rfc/rfc7986#section-5.10) | MUST | deferred: We do not create IMAGE properties; the rule matters only if image support is added. |  |
 | [`RFC7986:5.10:image-fmttype-recommended`](https://www.rfc-editor.org/rfc/rfc7986#section-5.10) | SHOULD | deferred: We do not create IMAGE properties; existing ones are preserved only. |  |
@@ -363,7 +363,7 @@ Required requirements with a test: **306 of 335**.
 | `POLICY:respond-requires-organizer` | policy | required | `src/conformance/scheduling.test.ts` |
 | `POLICY:reject-respond-when-not-attendee` | policy | required | `src/conformance/scheduling.test.ts` |
 | `POLICY:respond-clears-rsvp` | policy | deferred: No RFC requirement; RSVP only asks the organizer's client for a reply, which we do not send. Revisit when a user-visible need appears. |  |
-| `POLICY:no-itip-emission` | policy | required |  |
+| `POLICY:no-itip-emission` | policy | required | `src/conformance/alarms-misc.test.ts` |
 | `POLICY:refuse-organizer-change` | policy | required | `src/conformance/scheduling.test.ts` |
 | `POLICY:organizer-without-attendee-valid` | policy | required | `src/conformance/reads.test.ts`, `src/conformance/scheduling.test.ts` |
 | `POLICY:sequence-organizer-bump` | policy | required | `src/conformance/scheduling.test.ts` |

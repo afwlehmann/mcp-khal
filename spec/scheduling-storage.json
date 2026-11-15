@@ -1130,7 +1130,8 @@
     "scope": ["generate"],
     "matrixRef": "V11",
     "test": "A generated CONFERENCE line is CONFERENCE;VALUE=URI:https://meet.example/x; IMAGE uses VALUE=URI or VALUE=BINARY.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server writes none of the properties RFC 7986 adds (COLOR, IMAGE, CONFERENCE, NAME, ...); existing ones are preserved verbatim, VALUE parameters included."
   },
   {
     "id": "RFC7986:5.1:name-vcalendar-level",
@@ -1182,7 +1183,8 @@
     "scope": ["generate"],
     "matrixRef": "V4",
     "test": "new_event UID matches ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ (random from an injected source, not read inside the function).",
-    "status": "required"
+    "status": "deferred",
+    "reason": "The UID is a random UUID v4 (randomUUID at the process edge) followed by the fixed suffix @mcp-khal, which split-off series also use; the value is therefore not a bare UUID. Dropping the suffix is a separate decision."
   },
   {
     "id": "RFC7986:5.3:uid-opaque-length",
@@ -1208,7 +1210,8 @@
     "scope": ["parse", "generate", "edit"],
     "matrixRef": "V10",
     "test": "Setting a colour on an event that already has COLOR replaces that line; the VEVENT never ends up with two COLOR lines.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "No tool sets a colour: the server never writes COLOR and leaves an existing COLOR line untouched."
   },
   {
     "id": "RFC7986:5.9:color-css3-name",
@@ -1221,7 +1224,8 @@
     "scope": ["generate", "parse"],
     "matrixRef": "V9",
     "test": "COLOR:Turquoise is accepted; a generated COLOR value is a CSS3 name (COLOR:turquoise), not #40e0d0; a vdir color file is a different thing (VDIR:color-format).",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server never generates COLOR and does not interpret colour names, so there is no value to validate; an existing COLOR is preserved verbatim."
   },
   {
     "id": "RFC7986:5.9:color-clients-may-use",

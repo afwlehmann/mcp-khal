@@ -361,7 +361,8 @@
     "scope": ["parse", "expand"],
     "matrixRef": "VA7",
     "test": "TRIGGER:-PT15M fires 15 minutes before DTSTART; TRIGGER;RELATED=END:PT0S fires at the event end.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server never evaluates an alarm trigger. The alarms it writes carry TRIGGER without RELATED, so START applies by default (see RFC5545:3.8.6.3:trigger-default-duration-start); foreign alarms are kept verbatim."
   },
   {
     "id": "RFC5545:3.2.16:role-default-req-participant",
@@ -2025,7 +2026,8 @@
     "scope": ["parse", "generate"],
     "matrixRef": "E15",
     "test": "CREATED:19960329T133000Z is accepted; a CREATED without Z is flagged; CREATED is not changed by edits.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server neither writes nor reads CREATED (new events carry DTSTAMP only); an existing CREATED line is left untouched by edits."
   },
   {
     "id": "RFC5545:3.8.7.3:last-modified-utc",
@@ -2195,7 +2197,8 @@
     "scope": ["parse"],
     "matrixRef": "VA2",
     "test": "An AUDIO alarm with zero or one ATTACH parses; two ATTACH lines are flagged.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "We never write AUDIO alarms (only ACTION:DISPLAY) and do not validate the content of a foreign VALARM; its lines, ATTACH included, are preserved verbatim (see RFC5545:3.8.6.1:ignore-unknown-alarm-action)."
   },
   {
     "id": "RFC5545:3.6.6:valarm-display-description",
@@ -2221,7 +2224,8 @@
     "scope": ["parse", "generate"],
     "matrixRef": "VA4",
     "test": "An EMAIL alarm missing DESCRIPTION, SUMMARY or ATTENDEE is flagged; one with all three parses.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "We never write EMAIL alarms (only ACTION:DISPLAY) and do not validate the content of a foreign VALARM; it is preserved verbatim."
   },
   {
     "id": "RFC5545:3.6.6:valarm-repeat-needs-duration-and-repeat",
@@ -2234,7 +2238,8 @@
     "scope": ["parse", "generate", "expand"],
     "matrixRef": "VA5",
     "test": "REPEAT:2 with DURATION:PT5M fires three times in total (initial plus 2 repetitions at 5-minute intervals).",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server does not fire or schedule alarms and writes no repeating alarm; a foreign REPEAT/DURATION pair is preserved verbatim."
   },
   {
     "id": "RFC5545:3.6.6:valarm-one-of-repeat-duration-no-repeat",
@@ -2247,7 +2252,8 @@
     "scope": ["parse", "expand"],
     "matrixRef": "VA5",
     "test": "A VALARM with REPEAT:2 but no DURATION (or the reverse) fires exactly once (the grammar says if one occurs so MUST the other, so the generator never writes only one).",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server does not fire or schedule alarms, so repetition is never computed; the alarms it writes have neither REPEAT nor DURATION (see RFC5545:3.6.6:valarm-grammar-duration-repeat-pair), foreign ones are preserved verbatim."
   },
   {
     "id": "RFC5545:3.6.6:valarm-grammar-duration-repeat-pair",
@@ -2273,7 +2279,8 @@
     "scope": ["parse", "generate"],
     "matrixRef": "VA5",
     "test": "REPEAT:4;DURATION:PT5M means 4 additional triggers after the initial one (5 total).",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server neither reads nor writes REPEAT: it writes one non-repeating DISPLAY alarm and keeps foreign alarms verbatim."
   },
   {
     "id": "RFC5545:3.8.6.1:ignore-unknown-alarm-action",
@@ -2325,7 +2332,8 @@
     "scope": ["parse", "expand"],
     "matrixRef": "VA7",
     "test": "TRIGGER;RELATED=END:PT5M fires five minutes after the end; TRIGGER;RELATED=END:-PT5M fires five minutes before the end.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server never interprets the sign of a trigger; it writes only negative durations (before the start, see RFC5545:3.8.6.3:trigger-default-duration-start) and keeps foreign alarms verbatim."
   },
   {
     "id": "RFC5545:3.8.6.3:trigger-datetime-utc",
@@ -2338,7 +2346,8 @@
     "scope": ["parse", "generate"],
     "matrixRef": "VA8",
     "test": "TRIGGER;VALUE=DATE-TIME:19980101T050000Z is accepted; the same without Z is rejected.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server never writes an absolute (DATE-TIME) trigger and does not parse foreign triggers; they are preserved verbatim."
   },
   {
     "id": "RFC5545:3.8.6.3:related-invalid-with-datetime",
@@ -2364,7 +2373,8 @@
     "scope": ["expand"],
     "matrixRef": "VA10",
     "test": "An all-day event on 1998-02-05 with TRIGGER:-PT15M fires 1998-02-04T23:45 in the injected user zone (e.g. America/New_York), or 23:45Z when no zone is configured.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server never computes when an alarm fires; for an all-day event it writes a TRIGGER duration relative to the start and leaves the interpretation to the calendar client."
   },
   {
     "id": "RFC5545:3.8.6.3:relative-start-needs-dtstart",
@@ -2390,7 +2400,8 @@
     "scope": ["parse", "generate"],
     "matrixRef": "VA11",
     "test": "TRIGGER;RELATED=END on an event with only DTSTART (zero length) is flagged; with DTEND or DURATION it is accepted.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "The server never writes RELATED=END (its alarms are relative to the start, which every written event has) and does not validate foreign alarms, which are preserved verbatim."
   },
   {
     "id": "RFC5545:3.8.6.3:absolute-trigger-recurring-once",
@@ -2403,7 +2414,8 @@
     "scope": ["expand"],
     "matrixRef": "VA13",
     "test": "A recurring daily event with TRIGGER;VALUE=DATE-TIME:19980101T050000Z produces one alarm at that instant, not one per occurrence.",
-    "status": "required"
+    "status": "n/a",
+    "reason": "Alarm times are never expanded for a recurring event; the server writes only relative (duration) triggers and keeps foreign absolute ones verbatim."
   },
   {
     "id": "RFC5545:3.6.6:valarm-only-in-vevent-vtodo-no-nesting",
