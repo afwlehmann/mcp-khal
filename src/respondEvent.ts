@@ -1,6 +1,6 @@
 import { Effect, Result } from "effect";
 import { resolveAddress } from "./config.js";
-import { editInstance, isoOf, occurrenceDates, type Scope, scopeOf } from "./editEvent.js";
+import { editInstance, isoOf, requireOccurrence, type Scope, scopeOf } from "./editEvent.js";
 import { InvalidInput, type KhalError } from "./errors.js";
 import { type Event, events, isMaster, mapEvents, mapProps, props, restamp } from "./ics.js";
 import type { Settings } from "./settings.js";
@@ -80,9 +80,7 @@ export const respondToEvent = (
     const { scope, date } = yield* Effect.fromResult(scopeOf(p));
     const uid = p.uid.trim();
     if (scope === "instance" && date !== undefined) {
-      const iso = isoOf(date);
-      if (!(yield* occurrenceDates(settings, p.calendar, uid, `${iso} 1d`)).includes(iso))
-        return yield* Effect.fail(new InvalidInput({ message: `event ${uid} has no occurrence on ${iso}` }));
+      yield* Effect.fromResult(requireOccurrence(stored.lines, uid, isoOf(date), settings.timezone));
     }
     yield* writeEvent(stored.file, yield* Effect.fromResult(respondLines(stored.lines, p, address, now)));
     const what = scope === "instance" && date !== undefined ? `the occurrence on ${isoOf(date)} of ` : "";

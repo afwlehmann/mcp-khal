@@ -11,12 +11,11 @@ describe("examples/mcp-khal.json", () => {
   it("is a valid config, so the documentation can never drift from the parser", async () => {
     const config = unwrap(parseConfig(await example("mcp-khal.json")));
     expect(config).toEqual({
-      khal: "khal",
       defaultCalendar: "work",
       calendars: {
-        work: { email: "me@example.com", alarm: "1d", path: "/home/me/.local/share/calendars/work" },
-        private: { email: "me@example.org", alarm: "none" },
-        school: { alarm: "90m" },
+        work: { path: "/home/me/.local/share/calendars/work", email: "me@example.com", alarm: "1d" },
+        private: { path: "/home/me/.local/share/calendars/private", email: "me@example.org", alarm: "none" },
+        school: { path: "/home/me/.local/share/calendars/school", alarm: "90m" },
       },
     });
   });

@@ -1,5 +1,5 @@
 import { Effect, Result } from "effect";
-import { isoOf, occurrenceDates } from "./editEvent.js";
+import { isoOf, requireOccurrence } from "./editEvent.js";
 import { InvalidInput, type KhalError } from "./errors.js";
 import { events, isMaster, mapEvents, prop, setProp, touch } from "./ics.js";
 import { compactDate, dateMs, dayOf, formatWall, parseWall, untilBefore, withUntil } from "./series.js";
@@ -46,15 +46,14 @@ export const endSeriesLines = (lines: readonly string[], p: EndParams, now: Date
     return mapEvents(lines, (e, main) => (main ? ended : exceptionDate(e) > last ? undefined : e));
   });
 
-/** Ends a recurring event after `lastDate`; the date has to be an occurrence khal lists. */
+/** Ends a recurring event after `lastDate`; the date has to be a real occurrence. */
 export const endSeries = (settings: Settings, p: EndParams, now: Date): Effect.Effect<string, KhalError> =>
   Effect.gen(function* () {
     const stored = yield* findEvent(settings, p.calendar, p.uid);
     const lines = yield* Effect.fromResult(endSeriesLines(stored.lines, p, now));
     const uid = p.uid.trim();
     const iso = isoOf(compactDate(p.lastDate) ?? "");
-    if (!(yield* occurrenceDates(settings, p.calendar, uid, `${iso} 1d`)).includes(iso))
-      return yield* Effect.fail(new InvalidInput({ message: `event ${uid} has no occurrence on ${iso}` }));
+    yield* Effect.fromResult(requireOccurrence(stored.lines, uid, iso, settings.timezone));
     yield* writeEvent(stored.file, lines);
     return `Ended event ${uid} in calendar ${p.calendar.trim()}: its last occurrence is on ${iso}.\n`;
   });

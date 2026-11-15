@@ -2,6 +2,9 @@ import { Result } from "effect";
 import { z } from "zod";
 import { isEmail } from "./config.js";
 import { InvalidInput } from "./errors.js";
+import type { EventTimes } from "./range.js";
+import { ianaZone, wallToInstant } from "./timezone.js";
+import { type VTimezone, vtimezone } from "./vtimezone.js";
 
 type V<A> = Result.Result<A, InvalidInput>;
 
@@ -19,7 +22,7 @@ export const Recurrence = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("weekly"),
     interval: Interval,
-    weekdays: z.array(Weekday).min(1).describe("Must include the weekday of the first occurrence"),
+    weekdays: z.array(Weekday).min(1).max(7).describe("Must include the weekday of the first occurrence"),
   }),
   z.object({
     kind: z.literal("monthly_day"),
@@ -39,7 +42,7 @@ export type Recurrence = z.infer<typeof Recurrence>;
 export const Ending = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("never") }),
   z.object({ kind: z.literal("count"), count: z.number().int().min(1).max(1000) }),
-  z.object({ kind: z.literal("until"), date: z.string().describe("YYYY-MM-DD, inclusive") }),
+  z.object({ kind: z.literal("until"), date: z.string().max(32).describe("YYYY-MM-DD, inclusive") }),
 ]);
 export type Ending = z.infer<typeof Ending>;
 
@@ -52,58 +55,20 @@ export type RecurrenceSpec = z.infer<typeof RecurrenceSpec>;
 
 export interface IcsEventParams {
   readonly summary: string;
-  readonly date: string; // YYYY-MM-DD, first occurrence
-  readonly startTime: string; // HH:MM
-  readonly endTime: string; // HH:MM, later than startTime
-  readonly recurrence?: Recurrence;
-  readonly ending?: Ending;
-  readonly location?: string;
-  readonly description?: string;
-  readonly alarm?: string; // e.g. 15m, 2h, 1d
-  readonly organizer?: string; // required when attendees is non-empty
-  readonly attendees?: readonly string[];
-}
-
-export interface NewIcsEvent {
-  readonly summary: string;
-  readonly start: string; // YYYY-MM-DD HH:MM
-  readonly end?: string; // HH:MM
-  readonly location?: string;
-  readonly description?: string;
-  readonly alarm?: string;
-  readonly recurrence?: RecurrenceSpec;
-  readonly organizer?: string;
-  readonly attendees?: readonly string[];
+  /** start and end as parsed by `parseEventTimes` (all-day, or timed in an IANA zone) */
+  readonly times: EventTimes;
+  readonly recurrence?: Recurrence | undefined;
+  readonly ending?: Ending | undefined;
+  readonly location?: string | undefined;
+  readonly description?: string | undefined;
+  readonly alarm?: string | undefined; // e.g. 15m, 2h, 1d
+  readonly organizer?: string | undefined; // required when attendees is non-empty
+  readonly attendees?: readonly string[] | undefined;
 }
 
 // ---------- pure helpers ----------
 
 const invalid = (message: string): InvalidInput => new InvalidInput({ message });
-
-/** Adapt unified tool input to the strict ICS event shape (recurring and/or with attendees). */
-export const toIcsParams = (p: NewIcsEvent): V<IcsEventParams> =>
-  Result.gen(function* () {
-    const s = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/.exec(p.start.trim());
-    if (!s)
-      return yield* Result.fail(invalid("with recurrence or attendees, start must be 'YYYY-MM-DD HH:MM'"));
-    if (p.end === undefined)
-      return yield* Result.fail(invalid("with recurrence or attendees, end ('HH:MM') is required"));
-    const e = /^\d{2}:\d{2}$/.exec(p.end.trim());
-    if (!e) return yield* Result.fail(invalid("with recurrence or attendees, end must be 'HH:MM'"));
-    return {
-      summary: p.summary,
-      date: s[1]!,
-      startTime: s[2]!,
-      endTime: e[0],
-      recurrence: p.recurrence?.pattern,
-      ending: p.recurrence?.ending,
-      location: p.location,
-      description: p.description,
-      alarm: p.alarm,
-      organizer: p.organizer?.trim(),
-      attendees: p.attendees?.map((a) => a.trim()),
-    };
-  });
 
 const BYDAY: Record<Weekday, string> = {
   monday: "MO",
@@ -134,15 +99,14 @@ const parseDate = (field: string, s: string): V<Date> => {
     : Result.fail(invalid(`${field} is not a real calendar date`));
 };
 
-const parseTime = (field: string, s: string): V<number> => {
-  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(s);
-  return m
-    ? Result.succeed(Number(m[1]) * 60 + Number(m[2]))
-    : Result.fail(invalid(`${field} must be HH:MM (24h)`));
-};
-
 const compactDate = (d: Date): string => d.toISOString().slice(0, 10).replace(/-/g, "");
-const compactTime = (t: string): string => `${t.replace(":", "")}00`;
+/** `2026-11-04` -> `20261104`, `2026-11-04T10:00:00` -> `20261104T100000` */
+const compact = (s: string): string => s.replace(/[-:]/g, "");
+const utcStamp = (ms: number): string =>
+  new Date(ms)
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}/, "");
 
 /** 1..4 counting from the start of the month. */
 const nthFromStart = (d: Date): number => Math.ceil(d.getUTCDate() / 7);
@@ -188,17 +152,43 @@ const ruleParts = (r: Recurrence): string[] => {
   }
 };
 
-const endingParts = (e: Ending, until: Date | undefined): string[] => {
+const endingParts = (e: Ending, until: string | undefined): string[] => {
   switch (e.kind) {
     case "never":
       return [];
     case "count":
       return [`COUNT=${e.count}`];
     case "until":
-      // floating UNTIL to match the floating DTSTART
-      return until ? [`UNTIL=${compactDate(until)}T235959`] : [];
+      return until === undefined ? [] : [`UNTIL=${until}`];
   }
 };
+
+/**
+ * UNTIL of a series, inclusive of the last day: a date for all-day events, else the end of that day
+ * in the event's zone as a UTC time (RFC 5545 requires UTC when DTSTART has a time zone).
+ */
+const untilValue = (t: EventTimes, until: Date): V<string> =>
+  t.allDay
+    ? Result.succeed(compactDate(until))
+    : Result.map(ianaZone(t.zone), (zone) =>
+        utcStamp(
+          wallToInstant(zone, {
+            year: until.getUTCFullYear(),
+            month: until.getUTCMonth() + 1,
+            day: until.getUTCDate(),
+            hour: 23,
+            minute: 59,
+            second: 59,
+          }),
+        ),
+      );
+
+const whenLines = (t: EventTimes, tz: VTimezone | undefined): string[] =>
+  t.allDay
+    ? [`DTSTART;VALUE=DATE:${compact(t.startDate)}`, `DTEND;VALUE=DATE:${compact(t.endDate)}`]
+    : tz === undefined || tz.lines.length === 0
+      ? [`DTSTART:${compact(t.start)}Z`, `DTEND:${compact(t.end)}Z`]
+      : [`DTSTART;TZID=${tz.tzid}:${compact(t.start)}`, `DTEND;TZID=${tz.tzid}:${compact(t.end)}`];
 
 // Anything an ICS parser may treat as a line break (CR, NEL, U+2028/2029 for Python's splitlines)
 // or other control character. Only tab and LF survive; CRLF is normalised to LF before the check.
@@ -243,10 +233,16 @@ export const fold = (line: string): string => {
   return [...done, cur].join("\r\n ");
 };
 
+/** Longest address accepted (RFC 5321 path limit). */
+export const MAX_ADDRESS = 254;
+
+/** Any control character (C0, DEL, C1 incl. U+0085) or U+2028/2029 would break the ICS line or inject a property. */
+const ADDRESS_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
 const mailto = (field: string, s: string): V<string> =>
-  isEmail(s)
+  s.length <= MAX_ADDRESS && !ADDRESS_CONTROL.test(s) && isEmail(s)
     ? Result.succeed(`mailto:${s}`)
-    : Result.fail(invalid(`${field} '${s}' is not a valid email address`));
+    : Result.fail(invalid(`${field} ${JSON.stringify(s)} is not a valid email address`));
 
 /** ORGANIZER + ATTENDEE lines; attendees without an organizer are rejected. */
 const inviteLines = (organizer: string | undefined, attendees: readonly string[] | undefined): V<string[]> =>
@@ -275,18 +271,21 @@ export const buildIcs = (
 ): V<string> =>
   Result.gen(function* () {
     if (p.summary.trim() === "") return yield* Result.fail(invalid("summary must not be empty"));
-    const date = yield* parseDate("date", p.date);
-    const start = yield* parseTime("startTime", p.startTime);
-    const end = yield* parseTime("endTime", p.endTime);
-    if (end <= start) return yield* Result.fail(invalid("endTime must be later than startTime"));
+    const t = p.times;
+    const firstDay = t.allDay ? t.startDate : t.start.slice(0, 10);
+    const date = yield* parseDate("date", firstDay);
+    if (!t.allDay && t.endInstant.getTime() <= t.startInstant.getTime())
+      return yield* Result.fail(invalid("end must be later than start"));
     if (p.recurrence !== undefined && !matchesRule(p.recurrence, date))
       return yield* Result.fail(
-        invalid(`date ${p.date} does not satisfy the recurrence rule (first occurrence must match)`),
+        invalid(`date ${firstDay} does not satisfy the recurrence rule (first occurrence must match)`),
       );
 
     const ending: Ending = p.ending ?? { kind: "never" };
     const until = ending.kind === "until" ? yield* parseDate("ending.date", ending.date) : undefined;
     if (until && until < date) return yield* Result.fail(invalid("ending.date is before date"));
+    const untilText = until === undefined ? undefined : yield* untilValue(t, until);
+    const tz = t.allDay ? undefined : yield* vtimezone(t.zone);
 
     const summary = yield* textField("summary", p.summary);
     const location = yield* textField("location", p.location);
@@ -294,20 +293,19 @@ export const buildIcs = (
     const alarm = yield* alarmLines(p.alarm);
     const invite = yield* inviteLines(p.organizer, p.attendees);
 
-    const day = compactDate(date);
     const rrule =
       p.recurrence === undefined
         ? []
-        : [`RRULE:${[...ruleParts(p.recurrence), ...endingParts(ending, until)].join(";")}`];
+        : [`RRULE:${[...ruleParts(p.recurrence), ...endingParts(ending, untilText)].join(";")}`];
     const lines = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
       "PRODID:-//mcp-khal//EN",
+      ...(tz?.lines ?? []),
       "BEGIN:VEVENT",
       `UID:${uid}`,
       `DTSTAMP:${stamp}`,
-      `DTSTART:${day}T${compactTime(p.startTime)}`,
-      `DTEND:${day}T${compactTime(p.endTime)}`,
+      ...whenLines(t, tz),
       ...rrule,
       `SUMMARY:${summary}`,
       ...invite,

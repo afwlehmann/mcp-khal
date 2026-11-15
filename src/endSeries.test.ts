@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { endSeries, endSeriesLines } from "./endSeries.js";
 import { events, isMaster, prop, unfoldLines } from "./ics.js";
-import { failure, fakeKhal, removeDir, runFail, runOk, tempDir, unwrap } from "./testlib.js";
+import { failure, removeDir, runFail, runOk, tempDir, testSettings, unwrap } from "./testlib.js";
 
 const NOW = new Date("2030-01-01T10:00:00Z");
 const ZONE = ";TZID=Europe/Berlin";
@@ -81,18 +81,7 @@ describe("endSeriesLines", () => {
 describe("endSeries", () => {
   let dir: string;
   let vdir: string;
-  let cleanups: (() => Promise<void>)[] = [];
-
-  const khalLists = async (days: string[]) => {
-    const record = (day: string) =>
-      [
-        ...["work", day, "09:00", day, "09:30", "Standup", "", "", "", "s1"],
-        ...["", "False", "False", "", ""],
-      ].join("\u001f");
-    const fake = await fakeKhal({ stdout: days.map((d) => `${record(d)}\u001e\n`).join("") });
-    cleanups = [...cleanups, fake.cleanup];
-    return fake.settings({ calendars: { work: { path: vdir } } });
-  };
+  const settings = () => testSettings({ calendars: { work: { path: vdir } } });
 
   beforeEach(async () => {
     dir = await tempDir();
@@ -101,14 +90,11 @@ describe("endSeries", () => {
     await writeFile(join(vdir, "s1.ics"), `${series().join("\r\n")}\r\n`);
   });
   afterEach(async () => {
-    await Promise.all(cleanups.map((c) => c()));
-    cleanups = [];
     await removeDir(dir);
   });
 
-  it("ends the series in its file once khal lists the day", async () => {
-    const s = await khalLists(["2030-10-19"]);
-    const out = await runOk(endSeries(s, { ...base, lastDate: "2030-10-19" }, NOW));
+  it("ends the series in its file when the day is an occurrence", async () => {
+    const out = await runOk(endSeries(settings(), { ...base, lastDate: "2030-10-19" }, NOW));
     expect(out).toBe("Ended event s1 in calendar work: its last occurrence is on 2030-10-19.\n");
     const lines = unfoldLines(await readFile(join(vdir, "s1.ics"), "utf8"));
     expect(prop(main(lines), "RRULE")?.value).toBe("FREQ=DAILY;UNTIL=20301020T065959Z");
@@ -116,19 +102,28 @@ describe("endSeries", () => {
 
   it("changes nothing for a day that is no occurrence or an unknown event", async () => {
     const before = await readFile(join(vdir, "s1.ics"), "utf8");
-    const s = await khalLists(["2030-10-21"]);
-    expect((await runFail(endSeries(s, { ...base, lastDate: "2030-10-19" }, NOW))).message).toBe(
-      "event s1 has no occurrence on 2030-10-19",
+    // COUNT=10 from 16 Oct ends on 25 Oct, so the 26th is no occurrence
+    expect((await runFail(endSeries(settings(), { ...base, lastDate: "2030-10-26" }, NOW))).message).toBe(
+      "event s1 has no occurrence on 2030-10-26",
     );
     expect(
-      (await runFail(endSeries(s, { ...base, uid: "nope", lastDate: "2030-10-19" }, NOW))).message,
+      (await runFail(endSeries(settings(), { ...base, uid: "nope", lastDate: "2030-10-19" }, NOW))).message,
     ).toMatch(/no event with uid 'nope'/);
     expect(await readFile(join(vdir, "s1.ics"), "utf8")).toBe(before);
   });
 
-  it("rejects a bad date before asking khal anything", async () => {
-    const s = await khalLists([]);
-    expect((await runFail(endSeries(s, { ...base, lastDate: "20301019" }, NOW))).message).toMatch(
+  it("refuses a day excluded by EXDATE", async () => {
+    const lines = series().flatMap((l) =>
+      l.startsWith("RRULE") ? [`EXDATE${ZONE}:20301019T090000`, l] : [l],
+    );
+    await writeFile(join(vdir, "s1.ics"), `${lines.join("\r\n")}\r\n`);
+    expect((await runFail(endSeries(settings(), { ...base, lastDate: "2030-10-19" }, NOW))).message).toBe(
+      "event s1 has no occurrence on 2030-10-19",
+    );
+  });
+
+  it("rejects a bad date", async () => {
+    expect((await runFail(endSeries(settings(), { ...base, lastDate: "20301019" }, NOW))).message).toMatch(
       /real date/,
     );
   });

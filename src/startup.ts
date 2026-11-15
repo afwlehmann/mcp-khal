@@ -28,17 +28,17 @@ export const maskEmail = (email: string): string => {
 
 /**
  * What is worth knowing about the effective configuration. Deliberately a whitelist: the
- * environment handed to khal (`childEnv`) is never part of it.
+ * environment is never part of it.
  */
 export const startupReport = (settings: Settings): Record<string, unknown> => ({
   configPath: settings.configPath,
-  khal: { binary: settings.khal, source: settings.khalSource },
-  timeoutMs: settings.timeoutMs,
+  timezone: settings.timezone,
   ...(settings.defaultCalendar === undefined ? {} : { defaultCalendar: settings.defaultCalendar }),
   calendars: Object.fromEntries(
     Object.entries(settings.calendars).map(([name, calendar]) => [
       name,
       {
+        path: calendar.path,
         ...(calendar.email === undefined ? {} : { email: maskEmail(calendar.email) }),
         ...(calendar.alarm === undefined ? {} : { alarm: calendar.alarm }),
       },

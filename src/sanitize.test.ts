@@ -5,7 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MAX_DESCRIPTION, MAX_TITLE, scopeOf, updateEvent, updateLines } from "./editEvent.js";
 import { createServer } from "./server.js";
-import { failure, fakeKhal, removeDir, runFail, runOk, tempDir, testSettings, unwrap } from "./testlib.js";
+import { failure, removeDir, runFail, runOk, tempDir, testSettings, unwrap } from "./testlib.js";
 import { createEvent, findEvent, MAX_FILE_BYTES, MAX_NAME, newFileIn, vdirOf } from "./vdir.js";
 
 const NOW = new Date("2030-01-01T10:00:00Z");
@@ -79,28 +79,18 @@ describe("names and files", () => {
     });
 
     it("refuses to split a series under an unsafe new uid, writing nothing", async () => {
-      const record = [
-        ...["work", "2030-10-18", "09:00", "2030-10-18", "09:30", "Standup", "", "", "", "u1"],
-        ...["", "False", "False", "FREQ=DAILY", ""],
-      ].join("\u001f");
-      const fake = await fakeKhal({ stdout: `${record}\u001e\n` });
-      try {
-        const before = (await readdir(vdir)).sort();
-        const s = fake.settings({ calendars: { work: { path: vdir } } });
-        const p = {
-          calendar: "work",
-          uid: "u1",
-          summary: "x",
-          scope: "from_date",
-          date: "2030-10-18",
-        } as const;
-        const e = await runFail(updateEvent(s, p, "../x", NOW));
-        expect(e.message).toMatch(/not a safe file name/);
-        expect((await readdir(vdir)).sort()).toEqual(before);
-        expect(await readFile(join(vdir, "u1.ics"), "utf8")).toBe(EVENT);
-      } finally {
-        await fake.cleanup();
-      }
+      const before = (await readdir(vdir)).sort();
+      const p = {
+        calendar: "work",
+        uid: "u1",
+        summary: "x",
+        scope: "from_date",
+        date: "2030-10-18",
+      } as const;
+      const e = await runFail(updateEvent(settings(), p, "../x", NOW));
+      expect(e.message).toMatch(/not a safe file name/);
+      expect((await readdir(vdir)).sort()).toEqual(before);
+      expect(await readFile(join(vdir, "u1.ics"), "utf8")).toBe(EVENT);
     });
   });
 });

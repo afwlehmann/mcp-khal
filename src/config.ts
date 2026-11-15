@@ -19,37 +19,30 @@ export type AlarmSetting = string;
 
 export const NO_ALARM = "none";
 
-/** Everything that can be configured for one calendar; every field is optional. */
+/** Everything that can be configured for one calendar; only `path` is required. */
 export interface CalendarConfig {
   /** the user's own address on this calendar: the organizer of invites, and who answers invitations */
   readonly email?: string;
   /** reminder for new events on this calendar; none when unset */
   readonly alarm?: AlarmSetting;
-  /**
-   * Absolute path of the calendar's vdir (the directory of its .ics files, `path` in khal's config).
-   * Needed by the tools that change existing events; khal itself cannot do that non-interactively.
-   */
-  readonly path?: string;
+  /** Absolute path of the calendar's vdir: the directory of its .ics files. */
+  readonly path: string;
 }
 
-/** calendar name (as khal reports it) -> its settings */
+/** calendar name -> its settings */
 export type Calendars = Readonly<Record<string, CalendarConfig>>;
 
 export interface Config {
-  /** the khal executable: a name looked up on PATH or an absolute path */
-  readonly khal: string;
   /**
    * The calendar `new_event` uses when the call names none, so that calendar's `email` and `alarm`
-   * apply. Unset: khal files the event in its own default calendar, whose settings are unknown.
-   * It has to exist in khal, which the startup checks verify.
+   * apply. Required when there are several calendars, never guessed; with exactly one calendar
+   * that one is meant.
    */
   readonly defaultCalendar?: string;
   readonly calendars: Calendars;
 }
 
-export const DEFAULT_KHAL = "khal";
 export const defaultConfig: Config = {
-  khal: DEFAULT_KHAL,
   calendars: {},
 };
 
@@ -70,6 +63,98 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const envValue = (env: Env, name: string): string | undefined => {
   const v = env[name]?.trim();
   return v === undefined || v === "" ? undefined : v;
+};
+
+// ---------- environment overrides ----------
+// Every property of the config file can be set (or overridden) by an environment variable. The
+// schema is one rule: the prefix `MCP_KHAL_`, then the key path in SCREAMING_SNAKE_CASE, every
+// part joined by a single `_`:
+//   defaultCalendar             -> MCP_KHAL_DEFAULT_CALENDAR
+//   calendars.<name>.path       -> MCP_KHAL_CALENDARS_<NAME>_PATH
+//   calendars.<name>.email      -> MCP_KHAL_CALENDARS_<NAME>_EMAIL
+//   calendars.<name>.alarm      -> MCP_KHAL_CALENDARS_<NAME>_ALARM
+// <NAME> is the calendar name in capitals with every run of characters other than A-Z and 0-9
+// turned into a single `_` (work-1 -> WORK_1). Because the shape of the config is fixed (the
+// settings of a calendar are the closed set path, email, alarm), the setting is always the last
+// part and the calendar everything between, so a `_` inside a name is not ambiguous. The location
+// of the config file itself is MCP_KHAL_CONFIG. An empty variable counts as unset; a variable
+// beats the file.
+
+export const ENV_PREFIX = "MCP_KHAL_";
+export const ENV_DEFAULT_CALENDAR = `${ENV_PREFIX}DEFAULT_CALENDAR`;
+const ENV_CALENDARS = `${ENV_PREFIX}CALENDARS_`;
+const CALENDAR_FIELDS = ["path", "email", "alarm"] as const;
+
+/** The part of a variable name that stands for a calendar name. */
+export const envSegment = (name: string): string =>
+  name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+
+/** The variable that sets `field` of the calendar called `name`. */
+export const calendarEnvName = (name: string, field: (typeof CALENDAR_FIELDS)[number]): string =>
+  `${ENV_CALENDARS}${envSegment(name)}_${field.toUpperCase()}`;
+
+/** Names the variable that supplied a value, so a message can point at it instead of at the file. */
+type Source = (path: string) => string;
+
+/**
+ * Lays the environment over the raw config: returns the new raw object and, for every path a
+ * variable set, the name of that variable. Variables that look like settings but are none (a typo)
+ * and calendar names that cannot be told apart by their variable name are problems.
+ */
+const overlayEnv = (
+  raw: Record<string, unknown>,
+  env: Env,
+): { readonly raw: Record<string, unknown>; readonly at: Source; readonly problems: readonly string[] } => {
+  const sources = new Map<string, string>();
+  const problems: string[] = [];
+  const out: Record<string, unknown> = { ...raw };
+
+  const defaultCalendar = envValue(env, ENV_DEFAULT_CALENDAR);
+  if (defaultCalendar !== undefined) {
+    out.defaultCalendar = defaultCalendar;
+    sources.set("defaultCalendar", ENV_DEFAULT_CALENDAR);
+  }
+
+  const vars = Object.keys(env)
+    .filter((k) => k.startsWith(ENV_CALENDARS) && envValue(env, k) !== undefined)
+    .sort();
+  if (vars.length > 0 && (raw.calendars === undefined || isRecord(raw.calendars))) {
+    const calendars: Record<string, unknown> = { ...(isRecord(raw.calendars) ? raw.calendars : {}) };
+    const bySegment = new Map<string, string[]>();
+    for (const name of Object.keys(calendars))
+      bySegment.set(envSegment(name), [...(bySegment.get(envSegment(name)) ?? []), name]);
+
+    for (const key of vars) {
+      const parsed = /^([A-Z0-9]+(?:_[A-Z0-9]+)*)_([A-Z]+)$/.exec(key.slice(ENV_CALENDARS.length));
+      const segment = parsed?.[1];
+      const known = CALENDAR_FIELDS.find((f) => f.toUpperCase() === parsed?.[2]);
+      if (segment === undefined || known === undefined) {
+        problems.push(
+          `${key} is not a setting (expected ${ENV_CALENDARS}<NAME>_PATH, ${ENV_CALENDARS}<NAME>_EMAIL or ${ENV_CALENDARS}<NAME>_ALARM, with <NAME> in capitals, digits and single underscores)`,
+        );
+        continue;
+      }
+      const existing = bySegment.get(segment) ?? [];
+      if (existing.length > 1) {
+        problems.push(
+          `${key} is ambiguous: the calendars ${existing.sort().join(" and ")} all map to ${segment}; rename one of them`,
+        );
+        continue;
+      }
+      const name = existing[0] ?? segment.toLowerCase();
+      const current = calendars[name];
+      calendars[name] = { ...(isRecord(current) ? current : {}), [known]: envValue(env, key) };
+      if (existing.length === 0) bySegment.set(segment, [name]);
+      sources.set(`calendars.${name}.${known}`, key);
+    }
+    out.calendars = calendars;
+  }
+
+  return { raw: out, at: (path: string): string => sources.get(path) ?? path, problems };
 };
 
 export type ConfigSource = "MCP_KHAL_CONFIG" | "XDG_CONFIG_HOME" | "default";
@@ -95,53 +180,6 @@ export const configLocation = (
       : problem(`XDG_CONFIG_HOME must be an absolute path, got ${JSON.stringify(xdg)}`);
   return valid({ path: join(home, ".config", "mcp-khal.json"), source: "default" });
 };
-
-/**
- * The khal executable is a bare command name (looked up on PATH) or an absolute path. A relative
- * path would depend on the working directory and `~` is not expanded, so both are rejected.
- * `label` names where the value came from, e.g. "config 'khal'" or "MCP_KHAL_BIN".
- */
-export const checkBinary = (raw: string, label: string): Validated<string> => {
-  const v = raw.trim();
-  if (v === "" || CONTROL.test(v))
-    return problem(`${label} must be a non-empty command name or absolute path without control characters`);
-  if (isAbsolute(v)) return valid(v);
-  if (v.startsWith("~"))
-    return problem(
-      `${label} must not start with '~', which is not expanded; use an absolute path (got ${v})`,
-    );
-  if (/[\s/\\]/.test(v) || v.startsWith("-"))
-    return problem(
-      `${label} must be a bare command name (looked up on PATH) or an absolute path, got ${JSON.stringify(v)}`,
-    );
-  return valid(v);
-};
-
-/** The environment variable wins over the config file's `khal`. */
-export const resolveKhalBinary = (
-  env: Env,
-  config: Config,
-): { readonly binary: string; readonly source: "MCP_KHAL_BIN" | "config" } => {
-  const fromEnv = envValue(env, "MCP_KHAL_BIN");
-  return fromEnv !== undefined
-    ? { binary: fromEnv, source: "MCP_KHAL_BIN" }
-    : { binary: config.khal, source: "config" };
-};
-
-/**
- * `MCP_KHAL_BIN`, when set, follows the same rule as the config's `khal`: a bare command name
- * or an absolute path, never a relative path.
- */
-export const checkEnvBinary = (env: Env): Validated<string | undefined> => {
-  const fromEnv = envValue(env, "MCP_KHAL_BIN");
-  return fromEnv === undefined ? valid(undefined) : checkBinary(fromEnv, "MCP_KHAL_BIN");
-};
-
-export const parseCalendarNames = (stdout: string): string[] =>
-  stdout
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l !== "");
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -175,12 +213,12 @@ const parseVdirPath = (raw: unknown, where: string): Validated<string> => {
 
 const CALENDAR_KEYS: readonly string[] = ["email", "alarm", "path"];
 
-/** One calendar's object: only `email` and `alarm` are known, each optional, every problem listed. */
-const parseCalendar = (raw: unknown, name: string): Validated<CalendarConfig> => {
+/** One calendar's object: `path` is required, `email` and `alarm` are optional; every problem listed. */
+const parseCalendar = (raw: unknown, name: string, at: Source = (p) => p): Validated<CalendarConfig> => {
   const where = `calendars.${name}`;
   if (!isRecord(raw))
     return problem(
-      `${where} must be an object like { "email": "me@example.com", "alarm": "15m" }, got ${JSON.stringify(raw)}`,
+      `${where} must be an object like { "path": "/home/me/calendars/work", "email": "me@example.com", "alarm": "15m" }, got ${JSON.stringify(raw)}`,
     );
   return Result.map(
     collect({
@@ -193,14 +231,19 @@ const parseCalendar = (raw: unknown, name: string): Validated<CalendarConfig> =>
             ),
           ),
       ),
-      email: raw.email === undefined ? valid(undefined) : parseEmail(raw.email, `${where}.email`),
-      alarm: raw.alarm === undefined ? valid(undefined) : parseAlarm(raw.alarm, `${where}.alarm`),
-      path: raw.path === undefined ? valid(undefined) : parseVdirPath(raw.path, `${where}.path`),
+      email: raw.email === undefined ? valid(undefined) : parseEmail(raw.email, at(`${where}.email`)),
+      alarm: raw.alarm === undefined ? valid(undefined) : parseAlarm(raw.alarm, at(`${where}.alarm`)),
+      path:
+        raw.path === undefined
+          ? problem(
+              `${where}.path is required (or ${calendarEnvName(name, "path")}): the absolute path of the directory of the calendar's .ics files`,
+            )
+          : parseVdirPath(raw.path, at(`${where}.path`)),
     }),
     ({ email, alarm, path }): CalendarConfig => ({
+      path,
       ...(email === undefined ? {} : { email }),
       ...(alarm === undefined ? {} : { alarm }),
-      ...(path === undefined ? {} : { path }),
     }),
   );
 };
@@ -237,7 +280,7 @@ const parseCalendars = (
 const checkUniquePaths = (calendars: Calendars): Validated<Calendars> => {
   const byPath = new Map<string, string[]>();
   for (const [name, c] of Object.entries(calendars))
-    if (c.path !== undefined) byPath.set(resolve(c.path), [...(byPath.get(resolve(c.path)) ?? []), name]);
+    byPath.set(resolve(c.path), [...(byPath.get(resolve(c.path)) ?? []), name]);
   const shared = [...byPath.entries()].filter(([, names]) => names.length > 1);
   return shared.length === 0
     ? valid(calendars)
@@ -256,72 +299,102 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
     'been dropped: set "alarm" on each calendar under "calendars", and name the calendar for events without one in "defaultCalendar"',
 };
 
-const parseBinary = (raw: unknown): Validated<string> =>
-  typeof raw === "string"
-    ? checkBinary(raw, "config 'khal'")
-    : problem(`config 'khal' must be a string, got ${JSON.stringify(raw)}`);
-
 /** Every key the config file knows, in the order they are written. */
-export const CONFIG_KEYS: readonly string[] = ["khal", "defaultCalendar", "calendars"];
+export const CONFIG_KEYS: readonly string[] = ["defaultCalendar", "calendars"];
 
-const parseDefaultCalendar = (raw: unknown): Validated<string> =>
+const parseDefaultCalendar = (raw: unknown, label: string): Validated<string> =>
   typeof raw === "string"
-    ? checkCalendarName(raw, "defaultCalendar")
-    : problem(`defaultCalendar must be a calendar name (a string), got ${JSON.stringify(raw)}`);
+    ? checkCalendarName(raw, label)
+    : problem(`${label} must be a calendar name (a string), got ${JSON.stringify(raw)}`);
+
+/** The default calendar must be one of the configured calendars, and is required when there are several. */
+const checkDefaultCalendar = (
+  calendars: Calendars,
+  defaultCalendar: string | undefined,
+  label: string,
+): Validated<string | undefined> => {
+  const names = Object.keys(calendars).sort();
+  if (defaultCalendar === undefined)
+    return names.length > 1
+      ? problem(
+          `several calendars are configured (${names.join(", ")}): set "defaultCalendar" (or ${ENV_DEFAULT_CALENDAR}) to the one new events go to when a call names no calendar`,
+        )
+      : valid(undefined);
+  return Object.hasOwn(calendars, defaultCalendar)
+    ? valid(defaultCalendar)
+    : problem(
+        `${label} '${defaultCalendar}' is not one of the configured calendars (${names.join(", ") || "none"})`,
+      );
+};
+
+/** Validates the raw configuration (file and environment already merged); every problem is listed. */
+const parseRaw = (raw: Record<string, unknown>, at: Source): Validated<Config> => {
+  const parsed = Result.map(
+    collect({
+      unknownKeys: collectAll(
+        Object.keys(raw)
+          .filter((k) => !CONFIG_KEYS.includes(k))
+          .map((k) =>
+            problem(
+              k in RETIRED_KEYS
+                ? `config key '${k}' has ${RETIRED_KEYS[k]}`
+                : `unknown config key '${k}' (expected ${CONFIG_KEYS.map((x) => `'${x}'`).join(", ")})`,
+            ),
+          ),
+      ),
+      defaultCalendar:
+        raw.defaultCalendar === undefined
+          ? valid(undefined)
+          : parseDefaultCalendar(raw.defaultCalendar, at("defaultCalendar")),
+      calendars:
+        raw.calendars === undefined
+          ? valid({} as Calendars)
+          : Result.flatMap(
+              parseCalendars(raw.calendars, "calendars", (value, name) => parseCalendar(value, name, at)),
+              checkUniquePaths,
+            ),
+    }),
+    ({ defaultCalendar, calendars }) => ({ defaultCalendar, calendars }),
+  );
+  return Result.flatMap(parsed, ({ defaultCalendar, calendars }) =>
+    Result.map(
+      checkDefaultCalendar(calendars, defaultCalendar, at("defaultCalendar")),
+      (checked): Config => ({
+        ...(checked === undefined ? {} : { defaultCalendar: checked }),
+        calendars,
+      }),
+    ),
+  );
+};
 
 /**
- * `{ "khal": "khal", "defaultCalendar": "work",
- *    "calendars": { "work": { "email": "me@example.com", "alarm": "1d" } } }`; all keys are optional.
- * A flat `{ "work": "me@example.com" }` (the format of v1.0.0) is still understood.
- * Every problem of the file is reported, not only the first.
+ * The configuration from the file's text (`undefined`: there is no file) with the environment laid
+ * over it (see "environment overrides"). The file looks like
+ * `{ "defaultCalendar": "work",
+ *    "calendars": { "work": { "path": "/home/me/calendars/work", "email": "me@example.com", "alarm": "1d" } } }`;
+ * both keys are optional. Every problem is reported, not only the first.
  */
-export const parseConfigValidated = (json: string): Validated<Config> =>
+export const parseConfigWithEnv = (json: string | undefined, env: Env): Validated<Config> =>
   Result.flatMap(
-    Result.try({
-      try: (): unknown => JSON.parse(json),
-      catch: (e): Problems => [`config is not valid JSON: ${e instanceof Error ? e.message : String(e)}`],
-    }),
-    (raw): Validated<Config> => {
-      if (!isRecord(raw)) return problem("config must be a JSON object");
-
-      const legacy = Object.values(raw).every((v) => typeof v === "string" && isEmail(v.trim()));
-      if (legacy)
-        return Result.map(
-          parseCalendars(raw, "config", (value, name) =>
-            Result.map(parseEmail(value, `config entry '${name}'`), (email): CalendarConfig => ({ email })),
-          ),
-          (calendars) => ({ ...defaultConfig, calendars }),
-        );
-
+    json === undefined
+      ? valid<unknown>({})
+      : Result.try({
+          try: (): unknown => JSON.parse(json),
+          catch: (e): Problems => [`config is not valid JSON: ${e instanceof Error ? e.message : String(e)}`],
+        }),
+    (fileRaw): Validated<Config> => {
+      if (!isRecord(fileRaw)) return problem("config must be a JSON object");
+      const { raw, at, problems } = overlayEnv(fileRaw, env);
+      // the problems of the variables and those of the values are reported together
       return Result.map(
-        collect({
-          unknownKeys: collectAll(
-            Object.keys(raw)
-              .filter((k) => !CONFIG_KEYS.includes(k))
-              .map((k) =>
-                problem(
-                  k in RETIRED_KEYS
-                    ? `config key '${k}' has ${RETIRED_KEYS[k]}`
-                    : `unknown config key '${k}' (expected ${CONFIG_KEYS.map((x) => `'${x}'`).join(", ")})`,
-                ),
-              ),
-          ),
-          khal: raw.khal === undefined ? valid(DEFAULT_KHAL) : parseBinary(raw.khal),
-          defaultCalendar:
-            raw.defaultCalendar === undefined ? valid(undefined) : parseDefaultCalendar(raw.defaultCalendar),
-          calendars:
-            raw.calendars === undefined
-              ? valid({} as Calendars)
-              : Result.flatMap(parseCalendars(raw.calendars, "calendars", parseCalendar), checkUniquePaths),
-        }),
-        ({ khal, defaultCalendar, calendars }): Config => ({
-          khal,
-          ...(defaultCalendar === undefined ? {} : { defaultCalendar }),
-          calendars,
-        }),
+        collect({ variables: collectAll(problems.map((p) => problem(p))), config: parseRaw(raw, at) }),
+        (v) => v.config,
       );
     },
   );
+
+/** The file alone, without the environment: what `mcp-khal setup` reads and writes back. */
+export const parseConfigValidated = (json: string): Validated<Config> => parseConfigWithEnv(json, {});
 
 export const parseConfig = (json: string): Result.Result<Config, InvalidInput> =>
   orInvalidInput(parseConfigValidated(json));
@@ -330,7 +403,6 @@ export const parseConfig = (json: string): Result.Result<Config, InvalidInput> =
 export const serializeConfig = (c: Config): string =>
   `${JSON.stringify(
     {
-      khal: c.khal,
       ...(c.defaultCalendar === undefined ? {} : { defaultCalendar: c.defaultCalendar }),
       calendars: c.calendars,
     },
@@ -340,12 +412,18 @@ export const serializeConfig = (c: Config): string =>
 
 /**
  * The calendar a new event goes to: the one the call names, else the configured default
- * calendar, else none (khal then uses its own default).
+ * calendar, else the only calendar there is. Never guessed among several (the config check
+ * requires a default then), so `undefined` only happens with no calendar at all.
  */
 export const resolveCalendar = (
-  config: Pick<Config, "defaultCalendar">,
+  config: Pick<Config, "defaultCalendar" | "calendars">,
   calendar: string | undefined,
-): string | undefined => (calendar !== undefined ? calendar.trim() : config.defaultCalendar);
+): string | undefined => {
+  if (calendar !== undefined) return calendar.trim();
+  if (config.defaultCalendar !== undefined) return config.defaultCalendar;
+  const names = Object.keys(config.calendars);
+  return names.length === 1 ? names[0] : undefined;
+};
 
 /** The settings of one calendar, by the (trimmed) name; inherited object properties never match. */
 export const calendarOf = (
@@ -420,18 +498,22 @@ export const resolveAddress = (
 
 // ---------- effects (the path is always passed in) ----------
 
-/** The parsed file; `undefined` when it does not exist. Problems of the content accumulate. */
-export const readConfig = (path: string): Effect.Effect<Validated<Config> | undefined, KhalError> =>
+/** The text of the file; `undefined` when it does not exist. */
+export const readConfigText = (path: string): Effect.Effect<string | undefined, KhalError> =>
   Effect.tryPromise({
     try: () => readFile(path, "utf8"),
     catch: (u) => u as NodeJS.ErrnoException,
   }).pipe(
     Effect.matchEffect({
-      onFailure: (e): Effect.Effect<Validated<Config> | undefined, KhalError> =>
+      onFailure: (e): Effect.Effect<string | undefined, KhalError> =>
         e.code === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(ioError(e)),
-      onSuccess: (content) => Effect.succeed(parseConfigValidated(content)),
+      onSuccess: (content) => Effect.succeed(content),
     }),
   );
+
+/** The parsed file alone; `undefined` when it does not exist. Problems of the content accumulate. */
+export const readConfig = (path: string): Effect.Effect<Validated<Config> | undefined, KhalError> =>
+  Effect.map(readConfigText(path), (text) => (text === undefined ? undefined : parseConfigValidated(text)));
 
 /** A missing file is the default configuration, not an error. */
 export const loadConfig = (path: string): Effect.Effect<Config, KhalError> =>

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { events, isMaster, prop, props, unfoldLines } from "./ics.js";
 import { respondLines, respondToEvent } from "./respondEvent.js";
-import { failure, fakeKhal, removeDir, runFail, runOk, tempDir, unwrap } from "./testlib.js";
+import { failure, removeDir, runFail, runOk, tempDir, testSettings, unwrap } from "./testlib.js";
 
 const NOW = new Date("2030-01-01T10:00:00Z");
 const ME = "me@example.com";
@@ -111,18 +111,7 @@ describe("respondLines", () => {
 describe("respondToEvent", () => {
   let dir: string;
   let vdir: string;
-  let cleanups: (() => Promise<void>)[] = [];
-
-  const khalLists = async (days: string[], calendars = { work: { path: "", email: ME } }) => {
-    const record = (day: string) =>
-      [
-        ...["work", day, "09:00", day, "10:00", "Review", "", "", "", "i1"],
-        ...["", "False", "False", "", ""],
-      ].join("\u001f");
-    const fake = await fakeKhal({ stdout: days.map((d) => `${record(d)}\u001e\n`).join("") });
-    cleanups = [...cleanups, fake.cleanup];
-    return fake.settings({ calendars: { work: { ...calendars.work, path: vdir } } });
-  };
+  const settings = () => testSettings({ calendars: { work: { path: vdir, email: ME } } });
 
   beforeEach(async () => {
     dir = await tempDir();
@@ -131,23 +120,21 @@ describe("respondToEvent", () => {
     await writeFile(join(vdir, "i1.ics"), `${invite([], "FREQ=DAILY").join("\r\n")}\r\n`);
   });
   afterEach(async () => {
-    await Promise.all(cleanups.map((c) => c()));
-    cleanups = [];
     await removeDir(dir);
   });
 
   const stored = async () => unfoldLines(await readFile(join(vdir, "i1.ics"), "utf8"));
 
   it("answers for the whole event with the calendar's own address", async () => {
-    const out = await runOk(respondToEvent(await khalLists([]), { ...base, response: "accepted" }, NOW));
+    const out = await runOk(respondToEvent(settings(), { ...base, response: "accepted" }, NOW));
     expect(out).toBe(
       "Marked me@example.com as accepted for event i1 in calendar work. No reply was sent to the organizer.\n",
     );
     expect(status(main(await stored()))["mailto:Me@Example.com"]).toBe("ACCEPTED");
   });
 
-  it("answers for one occurrence once khal lists that day", async () => {
-    const s = await khalLists(["2030-10-18"]);
+  it("answers for one occurrence when that day is one", async () => {
+    const s = settings();
     const out = await runOk(
       respondToEvent(s, { ...base, response: "declined", scope: "instance", date: "2030-10-18" }, NOW),
     );
@@ -157,10 +144,11 @@ describe("respondToEvent", () => {
 
   it("refuses a day that is no occurrence, an unknown address and a bad scope, writing nothing", async () => {
     const before = await readFile(join(vdir, "i1.ics"), "utf8");
-    const s = await khalLists(["2030-10-21"]);
-    const instance = { ...base, response: "declined", scope: "instance", date: "2030-10-18" } as const;
+    const s = settings();
+    // the series starts on 16 Oct: the 15th is no occurrence
+    const instance = { ...base, response: "declined", scope: "instance", date: "2030-10-15" } as const;
     expect((await runFail(respondToEvent(s, instance, NOW))).message).toBe(
-      "event i1 has no occurrence on 2030-10-18",
+      "event i1 has no occurrence on 2030-10-15",
     );
     const noAddress = testNoEmail(s);
     expect(

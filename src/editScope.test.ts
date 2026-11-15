@@ -1,9 +1,17 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { seriesInfo, splitSeries, updateEvent, updateInstance } from "./editEvent.js";
+import {
+  occurrenceDates,
+  occurrencesBefore,
+  requireOccurrence,
+  seriesInfo,
+  splitSeries,
+  updateEvent,
+  updateInstance,
+} from "./editEvent.js";
 import { events, isMaster, prop, unfoldLines } from "./ics.js";
-import { failure, fakeKhal, removeDir, runFail, runOk, tempDir, unwrap } from "./testlib.js";
+import { failure, removeDir, runFail, runOk, tempDir, testSettings, unwrap } from "./testlib.js";
 
 const NOW = new Date("2030-01-01T10:00:00Z");
 const ZONE = ";TZID=Europe/Berlin";
@@ -206,23 +214,93 @@ describe("seriesInfo", () => {
   });
 });
 
-describe("updateEvent with a scope (khal tells which days exist)", () => {
+describe("occurrence checks on the stored lines", () => {
+  const ny = (rule: string, extra: string[] = []) => ({
+    host: "Europe/Berlin",
+    lines: [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:s1",
+      "DTSTART;TZID=America/New_York:20301101T220000",
+      "DTEND;TZID=America/New_York:20301101T230000",
+      `RRULE:${rule}`,
+      ...extra,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ],
+  });
+
+  it("lists dates in the zone of the event, not of the host", () => {
+    const { lines, host } = ny("FREQ=DAILY;COUNT=3");
+    // 22:00 in New York is already the next day in Berlin
+    expect(unwrap(occurrenceDates(lines, "2030-11-01", "2030-12-01", host))).toEqual([
+      "2030-11-01",
+      "2030-11-02",
+      "2030-11-03",
+    ]);
+  });
+
+  it("honours EXDATE, COUNT and UNTIL", () => {
+    const ex = ny("FREQ=DAILY;COUNT=5", ["EXDATE;TZID=America/New_York:20301103T220000"]);
+    expect(unwrap(occurrenceDates(ex.lines, "2030-11-01", "2030-12-01", ex.host))).toEqual([
+      "2030-11-01",
+      "2030-11-02",
+      "2030-11-04",
+      "2030-11-05",
+    ]);
+    // 22:00 on 2 Nov in New York (EDT, UTC-4) is 02:00Z on 3 Nov: UTC UNTIL is an instant, inclusive
+    const until = ny("FREQ=DAILY;UNTIL=20301103T020000Z");
+    expect(unwrap(occurrenceDates(until.lines, "2030-11-01", "2030-12-01", until.host))).toEqual([
+      "2030-11-01",
+      "2030-11-02",
+    ]);
+    const before = ny("FREQ=DAILY;UNTIL=20301103T015959Z");
+    expect(unwrap(occurrenceDates(before.lines, "2030-11-01", "2030-12-01", before.host))).toEqual([
+      "2030-11-01",
+    ]);
+    // 23:59:59Z on 2 Nov is only 19:59:59 in New York, before the 22:00 occurrence of that day
+    const early = ny("FREQ=DAILY;UNTIL=20301102T235959Z");
+    expect(unwrap(occurrenceDates(early.lines, "2030-11-01", "2030-12-01", early.host))).toEqual([
+      "2030-11-01",
+    ]);
+    expect(failure(requireOccurrence(ex.lines, "s1", "2030-11-03", ex.host)).message).toBe(
+      "event s1 has no occurrence on 2030-11-03",
+    );
+    expect(failure(requireOccurrence(ex.lines, "s1", "2030-11-06", ex.host)).message).toMatch(
+      /no occurrence/,
+    );
+    unwrap(requireOccurrence(ex.lines, "s1", "2030-11-02", ex.host));
+  });
+
+  it("keeps the local time across the DST change of New York (3 Nov 2030)", () => {
+    const { lines, host } = ny("FREQ=DAILY;COUNT=5");
+    unwrap(requireOccurrence(lines, "s1", "2030-11-03", host));
+    unwrap(requireOccurrence(lines, "s1", "2030-11-04", host));
+    expect(unwrap(occurrencesBefore(lines, "2030-11-01", "2030-11-04", host))).toBe(3);
+  });
+
+  it("counts occurrences before a date, honouring EXDATE", () => {
+    const { lines, host } = ny("FREQ=DAILY;COUNT=10", ["EXDATE;TZID=America/New_York:20301102T220000"]);
+    expect(unwrap(occurrencesBefore(lines, "2030-11-01", "2030-11-05", host))).toBe(3);
+    expect(unwrap(occurrencesBefore(lines, "2030-11-05", "2030-11-05", host))).toBe(0);
+  });
+
+  it("reports bad input as a failure", () => {
+    const empty = ["BEGIN:VCALENDAR", "END:VCALENDAR"];
+    expect(failure(occurrenceDates(empty, "2030-11-01", "2030-11-02", "Europe/Berlin")).message).toMatch(
+      /no main event/,
+    );
+    expect(failure(occurrenceDates(series(), "2030-02-30", "2030-12-01", "Europe/Berlin")).message).toMatch(
+      /real dates/,
+    );
+  });
+});
+
+describe("updateEvent with a scope (occurrences come from the stored file)", () => {
   let dir: string;
   let vdir: string;
-  let fakes: Awaited<ReturnType<typeof fakeKhal>>[] = [];
-
-  const record = (uid: string, day: string): string =>
-    [
-      ...["work", day, "09:00", day, "09:30", "Standup", "", "", "", uid],
-      ...["", "False", "False", "FREQ=DAILY", ""],
-    ].join("\u001f");
-
-  /** khal lists the series on these days, whatever it is asked */
-  const khalWith = async (days: string[], uid = "s1") => {
-    const fake = await fakeKhal({ stdout: days.map((d) => `${record(uid, d)}\u001e\n`).join("") });
-    fakes = [...fakes, fake];
-    return fake.settings({ calendars: { work: { path: vdir } } });
-  };
+  const settings = () => testSettings({ calendars: { work: { path: vdir } } });
 
   beforeEach(async () => {
     dir = await tempDir();
@@ -231,17 +309,19 @@ describe("updateEvent with a scope (khal tells which days exist)", () => {
     await writeFile(join(vdir, "s1.ics"), `${series().join("\r\n")}\r\n`);
   });
   afterEach(async () => {
-    await Promise.all(fakes.map((f) => f.cleanup()));
-    fakes = [];
     await removeDir(dir);
   });
 
   const stored = async (name: string) => unfoldLines(await readFile(join(vdir, name), "utf8"));
 
   it("scope instance writes an exception into the same file", async () => {
-    const s = await khalWith(["2030-10-20"]);
     const out = await runOk(
-      updateEvent(s, { ...base, scope: "instance", date: "2030-10-20", summary: "Retro" }, "n1", NOW),
+      updateEvent(
+        settings(),
+        { ...base, scope: "instance", date: "2030-10-20", summary: "Retro" },
+        "n1",
+        NOW,
+      ),
     );
     expect(out).toMatch(/^Updated the occurrence on 2030-10-20 of event s1 in calendar work\./);
     expect(exceptions(await stored("s1.ics"))).toHaveLength(1);
@@ -249,9 +329,13 @@ describe("updateEvent with a scope (khal tells which days exist)", () => {
   });
 
   it("scope from_date writes the new series first and ends the old one", async () => {
-    const s = await khalWith(["2030-10-16", "2030-10-17", "2030-10-18", "2030-10-19"]);
     const out = await runOk(
-      updateEvent(s, { ...base, scope: "from_date", date: "2030-10-19", summary: "Sync" }, "n1", NOW),
+      updateEvent(
+        settings(),
+        { ...base, scope: "from_date", date: "2030-10-19", summary: "Sync" },
+        "n1",
+        NOW,
+      ),
     );
     expect(out).toMatch(/new series with uid n1@mcp-khal\./);
     expect((await readdir(vdir)).sort()).toEqual(["n1@mcp-khal.ics", "s1.ics"]);
@@ -263,38 +347,43 @@ describe("updateEvent with a scope (khal tells which days exist)", () => {
 
   it("scope from_date counts nothing for a series without COUNT", async () => {
     await writeFile(join(vdir, "s1.ics"), `${series("FREQ=DAILY").join("\r\n")}\r\n`);
-    const s = await khalWith(["2030-10-19"]);
     await runOk(
-      updateEvent(s, { ...base, scope: "from_date", date: "2030-10-19", summary: "Sync" }, "n1", NOW),
+      updateEvent(
+        settings(),
+        { ...base, scope: "from_date", date: "2030-10-19", summary: "Sync" },
+        "n1",
+        NOW,
+      ),
     );
     expect(prop(main(await stored("n1@mcp-khal.ics")), "RRULE")?.value).toBe("FREQ=DAILY");
   });
 
   it("refuses a day that is no occurrence and changes nothing", async () => {
     const before = await readFile(join(vdir, "s1.ics"), "utf8");
-    for (const scope of ["instance", "from_date"] as const) {
-      const s = await khalWith(["2030-10-21"]);
-      const e = await runFail(
-        updateEvent(s, { ...base, scope, date: "2030-10-20", summary: "x" }, "n1", NOW),
-      );
-      expect(e.message).toBe("event s1 has no occurrence on 2030-10-20");
+    for (const date of ["2030-10-15", "2030-10-26"]) {
+      for (const scope of ["instance", "from_date"] as const) {
+        const e = await runFail(updateEvent(settings(), { ...base, scope, date, summary: "x" }, "n1", NOW));
+        expect(e.message).toBe(`event s1 has no occurrence on ${date}`);
+      }
     }
-    const other = await khalWith(["2030-10-20"], "other");
-    expect(
-      (
-        await runFail(
-          updateEvent(other, { ...base, scope: "instance", date: "2030-10-20", summary: "x" }, "n1", NOW),
-        )
-      ).message,
-    ).toMatch(/no occurrence/);
     expect(await readFile(join(vdir, "s1.ics"), "utf8")).toBe(before);
     expect(await readdir(vdir)).toEqual(["s1.ics"]);
   });
 
+  it("refuses an excluded day", async () => {
+    const lines = series("FREQ=DAILY;COUNT=10").flatMap((l) =>
+      l.startsWith("RRULE") ? [`EXDATE${ZONE}:20301020T090000`, l] : [l],
+    );
+    await writeFile(join(vdir, "s1.ics"), `${lines.join("\r\n")}\r\n`);
+    const e = await runFail(
+      updateEvent(settings(), { ...base, scope: "instance", date: "2030-10-20", summary: "x" }, "n1", NOW),
+    );
+    expect(e.message).toBe("event s1 has no occurrence on 2030-10-20");
+  });
+
   it("checks scope and date before anything else", async () => {
-    const s = await khalWith([]);
     const message = async (p: object) =>
-      (await runFail(updateEvent(s, { ...base, summary: "x", ...p }, "n1", NOW))).message;
+      (await runFail(updateEvent(settings(), { ...base, summary: "x", ...p }, "n1", NOW))).message;
     expect(await message({ scope: "instance" })).toMatch(/needs the date/);
     expect(await message({ scope: "from_date", date: "20301020" })).toMatch(/real date/);
     expect(await message({ scope: "all", date: "2030-10-20" })).toMatch(/only for scope/);

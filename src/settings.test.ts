@@ -1,64 +1,59 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { serializeConfig } from "./config.js";
+import { type Config, serializeConfig } from "./config.js";
 import { InvalidInput } from "./errors.js";
-import { buildSettings, DEFAULT_TIMEOUT_MS, loadSettings } from "./settings.js";
-import { removeDir, runFail, runOk, tempDir } from "./testlib.js";
+import { buildSettings, checkTimezone, loadSettings } from "./settings.js";
+import { failure, removeDir, runFail, runOk, tempDir, unwrap } from "./testlib.js";
 
 describe("buildSettings", () => {
-  const config = {
-    khal: "/cfg/khal",
-    calendars: { work: { email: "me@work.com" } },
-  };
-  const build = (env: Record<string, string | undefined>) =>
-    buildSettings({ env, config, configPath: "/c.json", tmpDir: "/tmp/x" });
+  const config: Config = { calendars: { work: { path: "/cal/work", email: "me@work.com" } } };
+  const build = (c: Config = config) =>
+    buildSettings({ config: c, configPath: "/c.json", timezone: "Europe/Berlin" });
 
-  it("takes the khal binary from the config and remembers where it came from", () => {
-    const s = build({ PATH: "/bin" });
-    expect(s).toMatchObject({
-      khal: "/cfg/khal",
-      khalSource: "config",
-      calendars: { work: { email: "me@work.com" } },
+  it("takes the calendars from the config and remembers where it is", () => {
+    expect(build()).toEqual({
+      calendars: config.calendars,
       configPath: "/c.json",
-      tmpDir: "/tmp/x",
-      timeoutMs: DEFAULT_TIMEOUT_MS,
+      configSource: "default",
+      configFound: true,
+      timezone: "Europe/Berlin",
     });
   });
 
   it("carries the default calendar and the per-calendar settings into the settings", () => {
-    const calendars = { work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } };
-    const s = buildSettings({
-      env: {},
-      config: { ...config, defaultCalendar: "work", calendars },
-      configPath: "/c.json",
-      tmpDir: "/tmp/x",
-    });
+    const calendars = {
+      work: { path: "/cal/work", email: "me@work.com", alarm: "1d" },
+      home: { path: "/cal/home", alarm: "none" },
+    };
+    const s = build({ defaultCalendar: "work", calendars });
     expect(s.defaultCalendar).toBe("work");
     expect(s.calendars).toEqual(calendars);
   });
 
-  it("has no default calendar when the config names none (the preflight works it out)", () => {
-    expect("defaultCalendar" in build({})).toBe(false);
+  it("has no default calendar when the config names none", () => {
+    expect("defaultCalendar" in build()).toBe(false);
   });
 
-  it("lets MCP_KHAL_BIN override the config", () => {
-    expect(build({ MCP_KHAL_BIN: "/env/khal" })).toMatchObject({
-      khal: "/env/khal",
-      khalSource: "MCP_KHAL_BIN",
+  it("records the source and whether the file was found", () => {
+    const s = buildSettings({
+      config,
+      configPath: "/c.json",
+      configSource: "MCP_KHAL_CONFIG",
+      configFound: false,
+      timezone: "UTC",
     });
+    expect(s).toMatchObject({ configSource: "MCP_KHAL_CONFIG", configFound: false });
+  });
+});
+
+describe("checkTimezone", () => {
+  it.each(["UTC", "Europe/Berlin", "  Asia/Tokyo \n"])("accepts %j", (zone) => {
+    expect(unwrap(checkTimezone(zone))).toBe(zone.trim());
   });
 
-  it("ignores an empty MCP_KHAL_BIN", () => {
-    expect(build({ MCP_KHAL_BIN: "" })).toMatchObject({ khal: "/cfg/khal", khalSource: "config" });
-  });
-
-  it("builds the environment for khal from the given env, forcing a UTF-8 locale", () => {
-    expect(build({ PATH: "/bin", LC_ALL: "de_DE" }).childEnv).toEqual({ PATH: "/bin", LC_ALL: "C.UTF-8" });
-  });
-
-  it("does not read process.env", () => {
-    expect(build({}).childEnv).toEqual({ LC_ALL: "C.UTF-8" });
+  it.each(["", "   ", "Not/AZone", "Mars"])("rejects %j", (zone) => {
+    expect(failure(checkTimezone(zone))[0]).toMatch(/host time zone must be a known IANA zone/);
   });
 });
 
@@ -70,21 +65,21 @@ describe("loadSettings", () => {
   });
   afterAll(() => removeDir(dir));
 
-  const input = (env: Record<string, string | undefined>) => ({ env, home: dir, tmpDir: "/tmp/x" });
+  const input = (env: Record<string, string | undefined>) => ({
+    env,
+    home: dir,
+    timezone: "Europe/Berlin",
+  });
 
   it("reads the config file named by MCP_KHAL_CONFIG exactly once into the settings", async () => {
     const path = join(dir, "cfg.json");
     await writeFile(
       path,
-      serializeConfig({
-        khal: "/cfg/khal",
-        calendars: { work: { email: "me@work.com" } },
-      }),
+      serializeConfig({ calendars: { work: { path: "/cal/work", email: "me@work.com" } } }),
     );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
     expect(s).toMatchObject({
-      khal: "/cfg/khal",
-      calendars: { work: { email: "me@work.com" } },
+      calendars: { work: { path: "/cal/work", email: "me@work.com" } },
       configPath: path,
     });
   });
@@ -98,37 +93,68 @@ describe("loadSettings", () => {
 
   it("uses the defaults when there is no config file", async () => {
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: join(dir, "missing.json") })));
-    expect(s).toMatchObject({ khal: "khal", khalSource: "config", calendars: {} });
-  });
-
-  it("applies MCP_KHAL_BIN on top of the file", async () => {
-    const path = join(dir, "cfg2.json");
-    await writeFile(path, serializeConfig({ khal: "/cfg/khal", calendars: {} }));
-    const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "/env/khal" })));
-    expect(s).toMatchObject({ khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
+    expect(s).toMatchObject({ calendars: {} });
+    expect("defaultCalendar" in s).toBe(false);
   });
 
   it("reads the default calendar and the per-calendar settings from the file", async () => {
     const path = join(dir, "alarms.json");
     await writeFile(
       path,
-      '{"defaultCalendar":"work","calendars":{"work":{"email":"me@work.com","alarm":"1d"},"home":{"alarm":"none"}}}',
+      '{"defaultCalendar":"work","calendars":{"work":{"path":"/cal/work","email":"me@work.com","alarm":"1d"},"home":{"path":"/cal/home","alarm":"none"}}}',
     );
     const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path })));
     expect(s.defaultCalendar).toBe("work");
-    expect(s.calendars).toEqual({ work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } });
+    expect(s.calendars).toEqual({
+      work: { path: "/cal/work", email: "me@work.com", alarm: "1d" },
+      home: { path: "/cal/home", alarm: "none" },
+    });
+  });
+
+  it("rejects a 'khal' key in the file like any other unknown key", async () => {
+    const path = join(dir, "old.json");
+    await writeFile(path, '{"khal":"/opt/khal","calendars":{"work":{"path":"/cal/work"}}}');
+    const e = await runFail(loadSettings(input({ MCP_KHAL_CONFIG: path })));
+    expect(e.message).toContain("unknown config key 'khal'");
+  });
+
+  it("does not read any variable but the location of the config file", async () => {
+    const path = join(dir, "bin.json");
+    await writeFile(path, "{}");
+    const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "/opt/khal" })));
+    expect(s).toEqual({
+      calendars: {},
+      configPath: path,
+      configSource: "MCP_KHAL_CONFIG",
+      configFound: true,
+      timezone: "Europe/Berlin",
+    });
   });
 
   it.each([
     ['{"defaultCalendar":15}', /defaultCalendar must be a calendar name/],
     ['{"defaultCalendar":"  "}', /defaultCalendar has an empty calendar name/],
     ['{"defaultAlarm":"15m"}', /config key 'defaultAlarm' has been dropped/],
-    ['{"calendars":{"work":{"alarm":"soon"}}}', /calendars\.work\.alarm must be/],
-    ['{"calendars":{"work":{"alarm":"1d"},"home":{"alarm":"-5m"}}}', /calendars\.home\.alarm must be/],
+    ['{"typo":1}', /unknown config key 'typo'/],
+    ['{"calendars":{"work":{"path":"/c/w","alarm":"soon"}}}', /calendars\.work\.alarm must be/],
+    [
+      '{"calendars":{"work":{"path":"/c/w","alarm":"1d"},"home":{"path":"/c/h","alarm":"-5m"}},"defaultCalendar":"work"}',
+      /calendars\.home\.alarm must be/,
+    ],
+    ['{"calendars":{"work":{"path":"/c/w","email":"nope"}}}', /calendars\.work\.email is not a valid email/],
+    ['{"calendars":{"work":{"email":"me@work.com"}}}', /calendars\.work\.path is required/],
+    ['{"calendars":{"work":{"path":"relative/dir"}}}', /calendars\.work\.path must be an absolute path/],
+    ['{"calendars":{"work":{"path":"~/cal"}}}', /calendars\.work\.path must be an absolute path/],
+    ['{"calendars":{"work":{"path":"/c/w"},"home":{"path":"/c/w"}},"defaultCalendar":"work"}', /same path/],
+    ['{"calendars":{"work":{"path":"/c/w"},"home":{"path":"/c/h"}}}', /several calendars are configured/],
+    [
+      '{"defaultCalendar":"nope","calendars":{"work":{"path":"/c/w"}}}',
+      /not one of the configured calendars/,
+    ],
     ['{"calendars":"15m"}', /calendars must be a JSON object/],
     ['{"calendars":{"work":"15m"}}', /calendars\.work must be an object/],
-  ])("refuses to start with an invalid calendar setting in the config: %s", async (content, message) => {
-    const path = join(dir, "bad-alarm.json");
+  ])("refuses to start with an invalid config: %s", async (content, message) => {
+    const path = join(dir, "bad.json");
     await writeFile(path, content);
     const e = await runFail(loadSettings(input({ MCP_KHAL_CONFIG: path })));
     expect(e).toBeInstanceOf(InvalidInput);
@@ -151,22 +177,11 @@ describe("loadSettings", () => {
   it("trims the environment variables it reads", async () => {
     const path = join(dir, "trim.json");
     await writeFile(path, "{}");
-    const s = await runOk(
-      loadSettings(input({ MCP_KHAL_CONFIG: `  ${path}\n`, MCP_KHAL_BIN: "  /env/khal \t" })),
-    );
-    expect(s).toMatchObject({ configPath: path, khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
-  });
-
-  it("treats a blank MCP_KHAL_BIN as unset", async () => {
-    const s = await runOk(
-      loadSettings(input({ MCP_KHAL_CONFIG: join(dir, "none.json"), MCP_KHAL_BIN: "  " })),
-    );
-    expect(s).toMatchObject({ khal: "khal", khalSource: "config" });
+    const s = await runOk(loadSettings(input({ MCP_KHAL_CONFIG: `  ${path}\n` })));
+    expect(s.configPath).toBe(path);
   });
 
   it.each([
-    [{ MCP_KHAL_BIN: "./khal" }, /MCP_KHAL_BIN must be a bare command name/],
-    [{ MCP_KHAL_BIN: "~/bin/khal" }, /MCP_KHAL_BIN must not start with '~'/],
     [{ MCP_KHAL_CONFIG: "relative/cfg.json" }, /MCP_KHAL_CONFIG must be an absolute path/],
     [{ XDG_CONFIG_HOME: "relative" }, /XDG_CONFIG_HOME must be an absolute path/],
   ])("refuses to start with an invalid environment: %j", async (env, message) => {
@@ -175,59 +190,44 @@ describe("loadSettings", () => {
     expect(e.message).toMatch(message);
   });
 
-  it.each(["khal", "khal-2"])("allows MCP_KHAL_BIN to be a bare command name: %j", async (value) => {
-    const s = await runOk(loadSettings(input({ MCP_KHAL_BIN: value })));
-    expect(s).toMatchObject({ khal: value, khalSource: "MCP_KHAL_BIN" });
-  });
-
-  it.each(["./khal", "bin/khal", "../khal", "my khal"])(
-    "never allows MCP_KHAL_BIN to be a relative path: %j",
-    async (value) => {
-      const e = await runFail(loadSettings(input({ MCP_KHAL_BIN: value })));
-      expect(e.message).toBe(
-        `MCP_KHAL_BIN must be a bare command name (looked up on PATH) or an absolute path, got ${JSON.stringify(value)}`,
-      );
+  it.each(["UTC", "Europe/Berlin", "America/New_York", "  Asia/Tokyo \n"])(
+    "accepts the host time zone %j",
+    async (zone) => {
+      const s = await runOk(loadSettings({ ...input({}), timezone: zone }));
+      expect(s.timezone).toBe(zone.trim());
     },
   );
 
-  it("accepts an absolute MCP_KHAL_BIN, also with spaces in the path", async () => {
-    const s = await runOk(loadSettings(input({ MCP_KHAL_BIN: "/opt/My Tools/khal" })));
-    expect(s).toMatchObject({ khal: "/opt/My Tools/khal", khalSource: "MCP_KHAL_BIN" });
-  });
-
-  it("refuses a relative temporary directory", async () => {
-    const e = await runFail(loadSettings({ env: {}, home: dir, tmpDir: "tmp" }));
-    expect(e.message).toMatch(/temporary directory must be an absolute path/);
+  it.each(["", "   ", "Not/AZone", "Mars"])("refuses the host time zone %j", async (zone) => {
+    const e = await runFail(loadSettings({ ...input({}), timezone: zone }));
+    expect(e).toBeInstanceOf(InvalidInput);
+    expect(e.message).toMatch(/host time zone must be a known IANA zone/);
   });
 
   it("reports the problems of the environment and of the config file together", async () => {
     const path = join(dir, "both.json");
-    await writeFile(path, '{"khal":"./khal","defaultAlarm":"soon","typo":1}');
+    await writeFile(path, '{"typo":1,"defaultAlarm":"soon","calendars":{"work":{"alarm":"soon"}}}');
     const e = await runFail(
-      loadSettings({ env: { MCP_KHAL_CONFIG: path, MCP_KHAL_BIN: "~/khal" }, home: dir, tmpDir: "tmp" }),
+      loadSettings({ env: { MCP_KHAL_CONFIG: path }, home: dir, timezone: "Not/AZone" }),
     );
     expect(e.message).toMatch(/^5 problems:/);
     for (const part of [
-      "MCP_KHAL_BIN must not start with '~'",
-      "temporary directory must be an absolute path",
+      "host time zone must be a known IANA zone",
       "unknown config key 'typo'",
-      "config 'khal' must be a bare command name",
       "config key 'defaultAlarm' has been dropped",
+      "calendars.work.alarm must be",
+      "calendars.work.path is required",
     ])
       expect(e.message).toContain(part);
   });
 
-  it("reports a bad location together with the other environment problems, without reading a file", async () => {
+  it("reports a bad location together with a bad time zone, without reading a file", async () => {
     const e = await runFail(
-      loadSettings({
-        env: { MCP_KHAL_CONFIG: "rel.json", MCP_KHAL_BIN: "./khal" },
-        home: dir,
-        tmpDir: "/tmp/x",
-      }),
+      loadSettings({ env: { MCP_KHAL_CONFIG: "rel.json" }, home: dir, timezone: "Mars" }),
     );
     expect(e.message).toMatch(/^2 problems:/);
     expect(e.message).toContain("MCP_KHAL_CONFIG must be an absolute path");
-    expect(e.message).toContain("MCP_KHAL_BIN must be a bare command name");
+    expect(e.message).toContain("host time zone must be a known IANA zone");
   });
 
   it("fails on a corrupt config instead of starting with guesses", async () => {

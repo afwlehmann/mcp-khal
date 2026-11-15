@@ -33,6 +33,15 @@ let
   # one statically typed object per calendar; options that are not set stay out of the JSON
   calendarModule = lib.types.submodule {
     options = {
+      path = lib.mkOption {
+        type = lib.types.strMatching "/[^[:cntrl:]]*";
+        example = "/home/me/.local/share/calendars/work";
+        description = ''
+          Required. Absolute path of the calendar's vdir: the directory of its `.ics` files. The
+          server reads and writes the files there directly; it checks at startup that the
+          directory can be read and written.
+        '';
+      };
       email = lib.mkOption {
         type = lib.types.nullOr emailAddress;
         default = null;
@@ -46,16 +55,6 @@ let
         description = ''
           Reminder for new events on this calendar (`30m`, `2h`, `1d` or `none`). Unset means
           no reminder. An alarm given with the event overrides it.
-        '';
-      };
-      path = lib.mkOption {
-        type = lib.types.nullOr (lib.types.strMatching "/[^[:cntrl:]]*");
-        default = null;
-        example = "/home/me/.local/share/calendars/work";
-        description = ''
-          Absolute path of the calendar's vdir (`path` in khal's config). Needed by the tools
-          that change existing events; the server checks at startup that it is a readable and
-          writable directory.
         '';
       };
     };
@@ -72,24 +71,14 @@ in
       description = "The mcp-khal package.";
     };
 
-    khalPackage = lib.mkOption {
-      type = lib.types.package;
-      default = pkgs.khal;
-      defaultText = lib.literalExpression "pkgs.khal";
-      description = ''
-        The khal that mcp-khal runs. Its path is written to the `khal` key of
-        `mcp-khal.json`, so the server does not depend on `PATH`.
-      '';
-    };
-
     defaultCalendar = lib.mkOption {
       type = lib.types.nullOr (lib.types.strMatching "[^[:cntrl:]]*[^[:space:]][^[:cntrl:]]*");
       default = null;
       example = "work";
       description = ''
-        The calendar new events go to when a call names none, by the name khal reports. Required
-        when khal has several calendars; with a single calendar that one is used. The server
-        checks at startup that khal has it, and never relies on khal's own `default_calendar`.
+        The calendar new events go to when a call names none. Required when several calendars
+        are configured; with a single calendar that one is used. The server checks at startup
+        that it is one of `calendars`.
       '';
     };
 
@@ -103,16 +92,19 @@ in
           path = "/home/me/.local/share/calendars/work";
         };
         private = {
+          path = "/home/me/.local/share/calendars/private";
           email = "me@example.org";
           alarm = "none";
         };
-        school.alarm = "90m";
+        school = {
+          path = "/home/me/.local/share/calendars/school";
+          alarm = "90m";
+        };
       };
       description = ''
-        Per-calendar settings, by the name khal reports (`khal printcalendars`): your address on
-        the calendar (the organizer of invites; replaces the interactive `mcp-khal setup`) and
-        the reminder for new events there. A name that khal does not know stops the server at
-        startup.
+        The calendars, by name. Each needs the `path` of its vdir; your address on the calendar
+        (the organizer of invites; replaces the interactive `mcp-khal setup`) and the reminder
+        for new events there are optional.
       '';
     };
   };
@@ -123,7 +115,6 @@ in
     xdg.configFile."mcp-khal.json".text =
       builtins.toJSON (
         {
-          khal = "${lib.getBin cfg.khalPackage}/bin/khal";
           calendars = lib.mapAttrs (_: calendar: lib.filterAttrs (_: v: v != null) calendar) cfg.calendars;
         }
         // lib.optionalAttrs (cfg.defaultCalendar != null) { inherit (cfg) defaultCalendar; }

@@ -1,8 +1,8 @@
 import { dirname } from "node:path";
 import { Effect, Result } from "effect";
 import { InvalidInput, type KhalError } from "./errors.js";
+import { occurrenceDatesIn } from "./expand.js";
 import { type Event, events, isMaster, mapEvents, prop, setProp, touch } from "./ics.js";
-import { execute, listArgs, parseEvents } from "./khal.js";
 import { titleWarning } from "./newEvent.js";
 import { textField } from "./recurrence.js";
 import {
@@ -316,21 +316,46 @@ export const splitSeries = (
 
 // ---------- effects ----------
 
-/** ISO dates (YYYY-MM-DD) on which khal shows an occurrence of the event, within a khal range. */
-export const occurrenceDates = (
-  settings: Settings,
-  calendar: string,
-  uid: string,
-  range: string,
-): Effect.Effect<string[], KhalError> =>
-  Effect.map(execute(settings, listArgs({ range, calendar })), (out) =>
-    parseEvents(out)
-      .filter((e) => e.uid === uid)
-      .map((e) => e.startDate),
-  );
-
 export const isoOf = (compact: string): string =>
   `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
+
+/** The ISO date after `iso` (a real date, YYYY-MM-DD). */
+const nextIso = (iso: string): string =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * ISO dates (YYYY-MM-DD) in `[from, to)` on which the stored event has an occurrence: EXDATE,
+ * UNTIL and COUNT are honoured, exceptions count at their own date. Dates are those of the event's
+ * own zone, `hostZone` places floating and all-day events.
+ */
+export const occurrenceDates = (
+  lines: readonly string[],
+  from: string,
+  to: string,
+  hostZone: string,
+): V<readonly string[]> => occurrenceDatesIn(lines, from, to, hostZone);
+
+/** Fails unless the event has an occurrence on `iso`. */
+export const requireOccurrence = (
+  lines: readonly string[],
+  uid: string,
+  iso: string,
+  hostZone: string,
+): V<void> =>
+  Result.flatMap(occurrenceDates(lines, iso, nextIso(iso), hostZone), (dates) =>
+    dates.includes(iso) ? Result.succeed(undefined) : fail(`event ${uid} has no occurrence on ${iso}`),
+  );
+
+/** Number of occurrences before `iso`, counted from the start of the series. */
+export const occurrencesBefore = (
+  lines: readonly string[],
+  startIso: string,
+  iso: string,
+  hostZone: string,
+): V<number> =>
+  startIso >= iso
+    ? Result.succeed(0)
+    : Result.map(occurrenceDates(lines, startIso, iso, hostZone), (dates) => dates.length);
 
 /** Changes an existing event, or part of a series, in the calendar's vdir. */
 export const updateEvent = (
@@ -352,10 +377,9 @@ export const updateEvent = (
       return done(`Updated event ${uid} ${where}.`);
     }
 
-    // the day has to be an occurrence khal knows (not excluded, not beyond the end of the series)
+    // the day has to be a real occurrence (not excluded, not beyond the end of the series)
     const iso = isoOf(date);
-    if (!(yield* occurrenceDates(settings, p.calendar, uid, `${iso} 1d`)).includes(iso))
-      return yield* Effect.fail(invalid(`event ${uid} has no occurrence on ${iso}`));
+    yield* Effect.fromResult(requireOccurrence(stored.lines, uid, iso, settings.timezone));
 
     if (scope === "instance") {
       yield* writeEvent(stored.file, yield* Effect.fromResult(updateInstance(stored.lines, p, now)));
@@ -366,9 +390,7 @@ export const updateEvent = (
     const before =
       info.count === undefined
         ? undefined
-        : (yield* occurrenceDates(settings, p.calendar, uid, `${info.startIso} ${iso}`)).filter(
-            (d) => d < iso,
-          ).length;
+        : yield* Effect.fromResult(occurrencesBefore(stored.lines, info.startIso, iso, settings.timezone));
     const newId = `${newUid}@mcp-khal`;
     const newFile = newFileIn(dirname(stored.file), `${newId}.ics`);
     if (typeof newFile !== "string") return yield* Effect.fail(newFile);

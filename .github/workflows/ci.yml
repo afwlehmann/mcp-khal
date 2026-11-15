@@ -44,38 +44,6 @@ jobs:
           ./result/bin/mcp-khal --bogus || rc=$?
           test "$rc" -eq 2
 
-  # The tools against the real khal from the dev shell (npm run test:integration). A job of its
-  # own: it needs the dev shell and the npm dependencies, and its failures should not be buried
-  # in the build and unit test job. Everything runs in temporary directories only.
-  integration:
-    name: integration (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Cache the Nix store
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-develop-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock', 'nix/**') }}
-          restore-prefixes-first-match: nix-develop-${{ runner.os }}-
-          gc-max-store-size: 2G
-      - name: Cache the npm downloads
-        uses: actions/cache@v6
-        with:
-          path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: npm-${{ runner.os }}-
-      - name: Install the npm dependencies inside the dev shell
-        run: nix develop --command npm ci --ignore-scripts
-      - name: Integration tests (real khal, temporary directories only)
-        run: nix develop --command npm run test:integration
-
   # npm build, typecheck and tests, in the dev shell like everything else.
   npm:
     name: npm
@@ -124,7 +92,7 @@ jobs:
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [nix, npm, integration]
+    needs: [nix, npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

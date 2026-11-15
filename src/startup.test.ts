@@ -5,7 +5,7 @@ import { testSettings } from "./testlib.js";
 describe("sanitize", () => {
   it("redacts values of secret-looking keys at any depth", () => {
     const input = {
-      khal: "khal",
+      path: "/cal/work",
       password: "hunter2",
       nested: {
         apiKey: "abc",
@@ -17,7 +17,7 @@ describe("sanitize", () => {
       passwords: ["a", "b"],
     };
     expect(sanitize(input)).toEqual({
-      khal: "khal",
+      path: "/cal/work",
       password: REDACTED,
       nested: {
         apiKey: REDACTED,
@@ -65,51 +65,56 @@ describe("maskEmail", () => {
 
 describe("startupReport", () => {
   const settings = testSettings({
-    khal: "/cfg/khal",
-    khalSource: "config",
     configPath: "/c.json",
     defaultCalendar: "work",
-    calendars: { work: { email: "me@work.com", alarm: "1d" }, home: { alarm: "none" } },
-    timeoutMs: 5000,
+    calendars: {
+      work: { path: "/cal/work", email: "me@work.com", alarm: "1d" },
+      home: { path: "/cal/home", alarm: "none" },
+    },
   });
 
-  it("reports the config path, the khal binary with its source and masked addresses", () => {
+  it("reports the config path, the time zone, the folders and masked addresses", () => {
     expect(startupReport(settings)).toEqual({
       configPath: "/c.json",
-      khal: { binary: "/cfg/khal", source: "config" },
-      timeoutMs: 5000,
+      timezone: "Europe/Berlin",
       defaultCalendar: "work",
-      calendars: { work: { email: "m***@work.com", alarm: "1d" }, home: { alarm: "none" } },
+      calendars: {
+        work: { path: "/cal/work", email: "m***@work.com", alarm: "1d" },
+        home: { path: "/cal/home", alarm: "none" },
+      },
     });
   });
 
-  it("shows that MCP_KHAL_BIN overrides the config", () => {
-    const report = startupReport({ ...settings, khal: "/env/khal", khalSource: "MCP_KHAL_BIN" });
-    expect(report.khal).toEqual({ binary: "/env/khal", source: "MCP_KHAL_BIN" });
+  it("leaves out the default calendar when there is none", () => {
+    const report = startupReport(testSettings({ calendars: { work: { path: "/cal/work" } } }));
+    expect("defaultCalendar" in report).toBe(false);
+    expect(report.calendars).toEqual({ work: { path: "/cal/work" } });
+  });
+
+  it("is a whitelist: only the config path, the zone, the default calendar and the calendars", () => {
+    expect(Object.keys(startupReport(settings)).sort()).toEqual([
+      "calendars",
+      "configPath",
+      "defaultCalendar",
+      "timezone",
+    ]);
   });
 });
 
 describe("startupLine", () => {
   it("never contains a full email address", () => {
-    const line = startupLine(testSettings({ calendars: { work: { email: "me@work.com" } } }));
+    const line = startupLine(
+      testSettings({ calendars: { work: { path: "/cal/work", email: "me@work.com" } } }),
+    );
     expect(line).toMatch(/^mcp-khal starting with configuration \{/);
     expect(line).toContain("m***@work.com");
+    expect(line).toContain("/cal/work");
     expect(line).not.toContain("me@work.com");
   });
 
-  it("never contains the environment handed to khal", () => {
-    const line = startupLine(
-      testSettings({
-        childEnv: { PATH: "/bin", API_TOKEN: "t0ps3cret", HOME: "/home/someone", DB_PASSWORD: "hunter2" },
-      }),
-    );
-    for (const leaked of ["t0ps3cret", "hunter2", "/home/someone", "API_TOKEN", "DB_PASSWORD"])
-      expect(line).not.toContain(leaked);
-  });
-
-  it("redacts a secret even if one is ever added to the report", () => {
-    const line = startupLine(testSettings({ khal: "https://user:pw@host/khal" }));
+  it("redacts credentials in a URL even if one ever ends up in the report", () => {
+    const line = startupLine(testSettings({ configPath: "https://user:pw@host/x" }));
     expect(line).not.toContain("user:pw");
-    expect(line).toContain(`https://${REDACTED}@host/khal`);
+    expect(line).toContain(`https://${REDACTED}@host/x`);
   });
 });

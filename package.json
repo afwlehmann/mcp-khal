@@ -1,7 +1,7 @@
 {
   "name": "mcp-khal",
-  "version": "2.1.0",
-  "description": "",
+  "version": "3.0.0",
+  "description": "MCP server for reading and changing events in local .ics calendars (vdir)",
   "main": "dist/cli.js",
   "files": [
     "dist",
@@ -21,8 +21,11 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "khal",
-    "calendar"
+    "calendar",
+    "ics",
+    "icalendar",
+    "vdir",
+    "vdirsyncer"
   ],
   "author": "Alexander Lehmann <afwlehmann@googlemail.com>",
   "license": "MIT",
@@ -30,9 +33,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "effect": "^4.1.1",
+    "ical.js": "^2.2.1",
+    "luxon": "^3.7.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/luxon": "^3.7.6",
     "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "^5.1.0",
     "typescript": "^7.0.2",

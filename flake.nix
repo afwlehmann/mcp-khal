@@ -1,5 +1,5 @@
 {
-  description = "MCP server for reading and creating events in khal calendars";
+  description = "MCP server for reading and changing events in local .ics calendars (vdir)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -88,7 +88,6 @@
             inherit shellHook;
             buildInputs = enabledPackages ++ [
               pkgs.nodejs
-              pkgs.khal
             ];
           };
         }

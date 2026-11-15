@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Result } from "effect";
@@ -51,81 +51,44 @@ export const tempDir = (): Promise<string> => mkdtemp(join(tmpdir(), "mcp-khal-t
 
 export const removeDir = (dir: string): Promise<void> => rm(dir, { recursive: true, force: true });
 
-/** Settings for tests; nothing is read from the real environment except PATH for the shell tools. */
+/** Settings for tests; nothing is read from the real environment. */
 export const testSettings = (overrides: Partial<Settings> = {}): Settings => ({
-  khal: "khal",
-  khalSource: "config",
   calendars: {},
   configPath: join(tmpdir(), "mcp-khal-tests-no-such-dir", "mcp-khal.json"),
   configSource: "default",
   configFound: true,
-  childEnv: { PATH: process.env.PATH },
-  tmpDir: tmpdir(),
-  timeoutMs: 15_000,
+  timezone: "Europe/Berlin",
   ...overrides,
 });
 
-export interface FakeKhalOptions {
-  readonly stdout?: string;
-  readonly stderr?: string;
-  readonly exit?: number;
-  /** seconds to sleep before answering, to provoke timeouts */
-  readonly sleep?: number;
-  /** exit with 1 and the stderr text when the first argument is this subcommand; others succeed */
-  readonly failOn?: string;
-}
-
-export interface FakeKhal {
-  /** directory containing the fake `khal` executable */
+/** A temporary sandbox with one vdir (`work/`) and a config path; removed by `cleanup`. */
+export interface Sandbox {
   readonly dir: string;
-  /** settings that run this fake khal */
-  readonly settings: (overrides?: Partial<Settings>) => Settings;
-  /** every invocation's argv, in order */
-  readonly calls: () => Promise<string[][]>;
-  /** contents of the last file passed to `khal import`, if any */
-  readonly imported: () => Promise<string | undefined>;
-  /** the value of MCP_TEST_MARK in the environment khal was started with */
-  readonly mark: () => Promise<string | undefined>;
+  /** the vdir of the calendar named `name`, created on demand */
+  readonly vdir: (name: string) => Promise<string>;
+  /** settings whose calendars are the given names, each with its own vdir under the sandbox */
+  readonly settings: (names?: readonly string[], overrides?: Partial<Settings>) => Promise<Settings>;
+  readonly read: (relative: string) => Promise<string | undefined>;
   readonly cleanup: () => Promise<void>;
 }
 
-/** A stand-in `khal` executable that records its argv and answers with canned output. */
-export const fakeKhal = async (opts: FakeKhalOptions = {}): Promise<FakeKhal> => {
+export const sandbox = async (): Promise<Sandbox> => {
   const dir = await tempDir();
-  const script = `#!/bin/sh
-{ for a in "$@"; do printf '%s\\n' "$a"; done; printf '%s\\n' '--end--'; } >> "${dir}/calls.log"
-printf '%s' "\${MCP_TEST_MARK-unset}" > "${dir}/mark"
-if [ "$1" = "import" ]; then for last; do :; done; cp "$last" "${dir}/imported.ics"; fi
-if [ -f "${dir}/sleep" ]; then sleep "$(cat "${dir}/sleep")"; fi
-if [ -f "${dir}/failon" ] && [ "$1" = "$(cat "${dir}/failon")" ]; then cat "${dir}/err" >&2; exit 1; fi
-cat "${dir}/out"
-cat "${dir}/err" >&2
-exit "$(cat "${dir}/exit")"
-`;
-  await writeFile(join(dir, "out"), opts.stdout ?? "");
-  await writeFile(join(dir, "err"), opts.stderr ?? "");
-  await writeFile(join(dir, "exit"), String(opts.exit ?? 0));
-  if (opts.sleep !== undefined) await writeFile(join(dir, "sleep"), String(opts.sleep));
-  if (opts.failOn !== undefined) await writeFile(join(dir, "failon"), opts.failOn);
-  await writeFile(join(dir, "khal"), script);
-  await chmod(join(dir, "khal"), 0o755);
-
-  const read = (name: string): Promise<string | undefined> =>
-    readFile(join(dir, name), "utf8").catch(() => undefined);
-
+  const vdir = async (name: string): Promise<string> => {
+    const path = join(dir, "calendars", name);
+    await mkdir(path, { recursive: true });
+    return path;
+  };
   return {
     dir,
-    settings: (overrides = {}) =>
-      testSettings({ khal: join(dir, "khal"), configPath: join(dir, "cfg.json"), ...overrides }),
-    calls: async () => {
-      const log = (await read("calls.log")) ?? "";
-      return log
-        .split("--end--\n")
-        .filter((block) => block !== "")
-        .map((block) => block.split("\n").slice(0, -1));
+    vdir,
+    settings: async (names = ["work"], overrides = {}) => {
+      const calendars = Object.fromEntries(
+        await Promise.all(names.map(async (n) => [n, { path: await vdir(n) }] as const)),
+      );
+      return testSettings({ calendars, configPath: join(dir, "cfg.json"), ...overrides });
     },
-    imported: () => read("imported.ics"),
-    mark: () => read("mark"),
+    read: (relative) => readFile(join(dir, relative), "utf8").catch(() => undefined),
     cleanup: () => removeDir(dir),
   };
 };

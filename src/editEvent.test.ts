@@ -138,7 +138,7 @@ describe("updateLines", () => {
 describe("vdir and updateEvent", () => {
   let dir: string;
   let vdir: string;
-  const settings = () => testSettings({ calendars: { work: { path: vdir }, bare: {} } });
+  const settings = () => testSettings({ calendars: { work: { path: vdir } } });
 
   beforeEach(async () => {
     dir = await tempDir();
@@ -158,8 +158,12 @@ describe("vdir and updateEvent", () => {
     expect((await runFail(findEvent(settings(), "work", "nope"))).message).toBe(
       "no event with uid 'nope' in calendar 'work'",
     );
-    expect((await runFail(findEvent(settings(), "bare", "u1"))).message).toMatch(/has no path configured/);
-    expect((await runFail(findEvent(settings(), "other", "u1"))).message).toMatch(/has no path configured/);
+    expect((await runFail(findEvent(settings(), "bare", "u1"))).message).toMatch(
+      /is not configured \(configured: work\)/,
+    );
+    expect((await runFail(findEvent(settings(), "other", "u1"))).message).toMatch(
+      /is not configured \(configured: work\)/,
+    );
     expect((await runFail(findEvent(settings(), "  ", "u1"))).message).toMatch(/must be a calendar name/);
     expect((await runFail(findEvent(settings(), "work", "a\u0007"))).message).toMatch(
       /uid must not be empty/,

@@ -1,15 +1,13 @@
-import { isAbsolute } from "node:path";
 import { Effect, Result } from "effect";
+import { IANAZone } from "luxon";
 import {
   type Calendars,
   type Config,
   type ConfigSource,
-  checkEnvBinary,
   configLocation,
-  defaultConfig,
   type Env,
-  readConfig,
-  resolveKhalBinary,
+  parseConfigWithEnv,
+  readConfigText,
 } from "./config.js";
 import type { KhalError } from "./errors.js";
 import { collect, problem, toInvalidInput, type Validated, valid } from "./validation.js";
@@ -19,64 +17,51 @@ import { collect, problem, toInvalidInput, type Validated, valid } from "./valid
  * No other module touches `process.env`, the home directory or the config file.
  */
 export interface Settings {
-  /** the khal executable that is run */
-  readonly khal: string;
-  /** where `khal` came from: the environment overrides the config file */
-  readonly khalSource: "MCP_KHAL_BIN" | "config";
-  /** the calendar `new_event` uses when the call names none; verified against khal at startup */
+  /** the calendar `new_event` uses when the call names none; unset with a single calendar */
   readonly defaultCalendar?: string;
-  /** per calendar: the user's address there and the reminder for new events */
+  /** per calendar: the folder of its .ics files, the user's address there and the reminder for new events */
   readonly calendars: Calendars;
   readonly configPath: string;
   /** which variable (or the default) decided `configPath` */
   readonly configSource: ConfigSource;
   /** whether the config file exists; a missing one means the defaults */
   readonly configFound: boolean;
-  /** the full environment handed to khal */
-  readonly childEnv: Env;
-  /** where temporary files are created */
-  readonly tmpDir: string;
-  readonly timeoutMs: number;
+  /** the host's IANA time zone (e.g. `Europe/Berlin`), read once at the edge */
+  readonly timezone: string;
 }
 
 /** What the edge (index.ts, cli.ts) reads from the process and hands over. */
 export interface SettingsInput {
   readonly env: Env;
   readonly home: string;
-  readonly tmpDir: string;
+  /** the host's time zone: `Intl.DateTimeFormat().resolvedOptions().timeZone` (honours TZ) */
+  readonly timezone: string;
 }
 
-export const DEFAULT_TIMEOUT_MS = 15_000;
-
-/** Pure: combine the already-read and already-validated environment and config. */
+/** Pure: combine the already-validated config and the host zone. */
 export const buildSettings = (input: {
-  readonly env: Env;
   readonly config: Config;
   readonly configPath: string;
   readonly configSource?: ConfigSource;
   readonly configFound?: boolean;
-  readonly tmpDir: string;
-}): Settings => {
-  const { binary, source } = resolveKhalBinary(input.env, input.config);
-  return {
-    khal: binary,
-    khalSource: source,
-    ...(input.config.defaultCalendar === undefined ? {} : { defaultCalendar: input.config.defaultCalendar }),
-    calendars: input.config.calendars,
-    configPath: input.configPath,
-    configSource: input.configSource ?? "default",
-    configFound: input.configFound ?? true,
-    childEnv: { ...input.env, LC_ALL: "C.UTF-8" },
-    tmpDir: input.tmpDir,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
-  };
-};
+  readonly timezone: string;
+}): Settings => ({
+  ...(input.config.defaultCalendar === undefined ? {} : { defaultCalendar: input.config.defaultCalendar }),
+  calendars: input.config.calendars,
+  configPath: input.configPath,
+  configSource: input.configSource ?? "default",
+  configFound: input.configFound ?? true,
+  timezone: input.timezone,
+});
 
-const checkTmpDir = (raw: string): Validated<string> => {
-  const dir = raw.trim();
-  return dir !== "" && isAbsolute(dir)
-    ? valid(dir)
-    : problem(`the temporary directory must be an absolute path, got ${JSON.stringify(raw)}`);
+/** Pure: the host zone must be a known IANA zone name. */
+export const checkTimezone = (raw: string): Validated<string> => {
+  const zone = raw.trim();
+  return zone !== "" && IANAZone.isValidZone(zone)
+    ? valid(zone)
+    : problem(
+        `the host time zone must be a known IANA zone such as Europe/Berlin, got ${JSON.stringify(raw)}`,
+      );
 };
 
 /**
@@ -87,16 +72,16 @@ export const loadSettings = (input: SettingsInput): Effect.Effect<Settings, Khal
   Effect.gen(function* () {
     const location = configLocation(input.env, input.home);
     // the file can only be read when its location is known; a bad location is reported anyway
-    const read = yield* Result.match(location, {
+    const text = yield* Result.match(location, {
       onFailure: () => Effect.succeed(undefined),
-      onSuccess: (l) => readConfig(l.path),
+      onSuccess: (l) => readConfigText(l.path),
     });
 
+    // the file (when there is one) with the environment laid over it
     const checked = collect({
       location,
-      envBinary: checkEnvBinary(input.env),
-      tmpDir: checkTmpDir(input.tmpDir),
-      config: read ?? valid(defaultConfig),
+      timezone: checkTimezone(input.timezone),
+      config: parseConfigWithEnv(text, input.env),
     });
 
     return yield* Result.match(checked, {
@@ -104,12 +89,11 @@ export const loadSettings = (input: SettingsInput): Effect.Effect<Settings, Khal
       onSuccess: (v) =>
         Effect.succeed(
           buildSettings({
-            env: input.env,
             config: v.config,
             configPath: v.location.path,
             configSource: v.location.source,
-            configFound: read !== undefined,
-            tmpDir: v.tmpDir,
+            configFound: text !== undefined,
+            timezone: v.timezone,
           }),
         ),
     });

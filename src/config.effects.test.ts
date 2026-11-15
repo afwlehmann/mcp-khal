@@ -20,26 +20,34 @@ describe("config files", () => {
   it("saves (creating parent directories) and loads a config", async () => {
     const path = join(dir, "nested", "deeper", "cfg.json");
     const c = {
-      khal: "/opt/khal/bin/khal",
-      calendars: { work: { email: "me@work.com" }, home: { email: "me@home.org" } },
+      defaultCalendar: "work",
+      calendars: {
+        work: { path: join(dir, "work"), email: "me@work.com" },
+        home: { path: join(dir, "home"), email: "me@home.org", alarm: "1d" },
+      },
     };
     await runOk(saveConfig(path, c));
     expect(await readFile(path, "utf8")).toBe(serializeConfig(c));
     expect(await runOk(loadConfig(path))).toEqual(c);
   });
 
-  it("loads a flat v1.0.0 mapping", async () => {
+  it("rejects a file with a key of an earlier version", async () => {
     const path = join(dir, "legacy.json");
-    await writeFile(path, '{"work":"me@work.com"}');
-    expect(await runOk(loadConfig(path))).toEqual({
-      khal: "khal",
-      calendars: { work: { email: "me@work.com" } },
-    });
+    await writeFile(path, `{"khal":"/opt/khal","calendars":{"work":{"path":"${join(dir, "w")}"}}}`);
+    const e = await runFail(loadConfig(path));
+    expect(e).toBeInstanceOf(InvalidInput);
+    expect(e.message).toContain("unknown config key 'khal'");
   });
 
   it("reports invalid content as InvalidInput", async () => {
     const path = join(dir, "bad.json");
     await writeFile(path, '{"work": "nope"}');
+    expect(await runFail(loadConfig(path))).toBeInstanceOf(InvalidInput);
+  });
+
+  it("reports a calendar without path as InvalidInput", async () => {
+    const path = join(dir, "nopath.json");
+    await writeFile(path, '{"calendars":{"work":{"email":"me@work.com"}}}');
     expect(await runFail(loadConfig(path))).toBeInstanceOf(InvalidInput);
   });
 

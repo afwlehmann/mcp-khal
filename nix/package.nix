@@ -3,7 +3,10 @@
   buildNpmPackage,
 }:
 
-# The server itself. khal is not bundled: the Home Manager module writes its path into the config.
+# The server itself. It reads and writes the .ics files (vdir) directly; there is no runtime
+# dependency besides Node. vdirsyncer, if used, stays an external tool.
+# TODO(maintainer): npmDepsHash must be recomputed whenever package-lock.json changes (this
+# change set did); set it to lib.fakeHash, build, and copy the reported hash.
 let
   packageJson = lib.importJSON ../package.json;
 in
@@ -26,7 +29,7 @@ buildNpmPackage {
     ];
   };
 
-  npmDepsHash = "sha256-JtdJcqIxHZI8iQacN5VLsNlEIB+4d8nOceEPnchRDHA=";
+  npmDepsHash = "sha256-Tj7WXRlQmkt9BpjQlSLLkeMEfgBoL/N+bWFiK2KSl9Y=";
 
   doCheck = true;
   checkPhase = ''
@@ -54,7 +57,7 @@ buildNpmPackage {
   '';
 
   meta = {
-    description = "MCP server for reading and creating events in khal calendars";
+    description = "MCP server for reading and changing events in local .ics calendars (vdir)";
     license = lib.licenses.mit;
     mainProgram = "mcp-khal";
     platforms = lib.platforms.unix;
