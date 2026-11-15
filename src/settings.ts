@@ -9,7 +9,7 @@ import {
   parseConfigWithEnv,
   readConfigText,
 } from "./config.js";
-import type { KhalError } from "./errors.js";
+import type { AppError } from "./errors.js";
 import { collect, problem, toInvalidInput, type Validated, valid } from "./validation.js";
 
 /**
@@ -68,7 +68,7 @@ export const checkTimezone = (raw: string): Validated<string> => {
  * Reads the config file named by the environment, once, and builds the settings. Everything that
  * is wrong with the environment variables and the file is reported together, not one at a time.
  */
-export const loadSettings = (input: SettingsInput): Effect.Effect<Settings, KhalError> =>
+export const loadSettings = (input: SettingsInput): Effect.Effect<Settings, AppError> =>
   Effect.gen(function* () {
     const location = configLocation(input.env, input.home);
     // the file can only be read when its location is known; a bad location is reported anyway

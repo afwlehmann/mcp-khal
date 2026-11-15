@@ -9,15 +9,11 @@ import {
   loadConfig,
   saveConfig,
 } from "./config.js";
-import { InvalidInput, ioError, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput, ioError } from "./errors.js";
 import { loadSettings, type Settings, type SettingsInput } from "./settings.js";
 
 /** Asks a question with an editable prefilled answer. */
-const ask = (
-  rl: Interface,
-  question: string,
-  prefill: string | undefined,
-): Effect.Effect<string, KhalError> =>
+const ask = (rl: Interface, question: string, prefill: string | undefined): Effect.Effect<string, AppError> =>
   Effect.tryPromise({
     try: () => {
       const answer = rl.question(question);
@@ -34,17 +30,16 @@ export const promptFor = (
   rl: Interface,
   calendar: string,
   current: string | undefined,
-): Effect.Effect<string | undefined, KhalError> => {
+): Effect.Effect<string | undefined, AppError> => {
   // an existing address wins; an email-like calendar name is the next best guess
   const fallback = current ?? (isEmail(calendar) ? calendar : undefined);
   const hint = fallback ? "" : " (blank to skip)";
-  const loop: Effect.Effect<string | undefined, KhalError> = Effect.flatMap(
+  const loop: Effect.Effect<string | undefined, AppError> = Effect.flatMap(
     ask(rl, `Your email on '${calendar}'${hint}: `, fallback),
     (answer) =>
       Result.match(interpretAnswer(answer, fallback), {
-        onFailure: (msg): Effect.Effect<string | undefined, KhalError> =>
-          Effect.flatMap(say(msg), () => loop),
-        onSuccess: (addr): Effect.Effect<string | undefined, KhalError> => Effect.succeed(addr),
+        onFailure: (msg): Effect.Effect<string | undefined, AppError> => Effect.flatMap(say(msg), () => loop),
+        onSuccess: (addr): Effect.Effect<string | undefined, AppError> => Effect.succeed(addr),
       }),
   );
   return loop;
@@ -59,13 +54,13 @@ export const promptPath = (
   calendar: string,
   current: string | undefined,
   taken: readonly string[],
-): Effect.Effect<string, KhalError> => {
-  const loop: Effect.Effect<string, KhalError> = Effect.flatMap(
+): Effect.Effect<string, AppError> => {
+  const loop: Effect.Effect<string, AppError> = Effect.flatMap(
     ask(rl, `Folder of the .ics files of '${calendar}': `, current),
     (answer) =>
       Result.match(interpretPath(answer, current, taken), {
-        onFailure: (msg): Effect.Effect<string, KhalError> => Effect.flatMap(say(msg), () => loop),
-        onSuccess: (path): Effect.Effect<string, KhalError> =>
+        onFailure: (msg): Effect.Effect<string, AppError> => Effect.flatMap(say(msg), () => loop),
+        onSuccess: (path): Effect.Effect<string, AppError> =>
           path === undefined
             ? Effect.flatMap(say("the folder is required"), () => loop)
             : Effect.succeed(path),
@@ -80,7 +75,7 @@ export const promptCalendar = (
   name: string,
   current: CalendarConfig | undefined,
   taken: readonly string[],
-): Effect.Effect<CalendarConfig, KhalError> =>
+): Effect.Effect<CalendarConfig, AppError> =>
   Effect.gen(function* () {
     const path = yield* promptPath(rl, name, current?.path, taken);
     const email = yield* promptFor(rl, name, current?.email);
@@ -108,9 +103,9 @@ export const promptDefaultCalendar = (
   rl: Interface,
   names: readonly string[],
   current: string | undefined,
-): Effect.Effect<string, KhalError> => {
+): Effect.Effect<string, AppError> => {
   const fallback = current !== undefined && names.includes(current) ? current : undefined;
-  const loop: Effect.Effect<string, KhalError> = Effect.flatMap(
+  const loop: Effect.Effect<string, AppError> = Effect.flatMap(
     ask(rl, `Calendar for new events when none is named (${names.join(", ")}): `, fallback),
     (answer) => {
       const chosen = answer.trim() === "" ? fallback : answer.trim();
@@ -123,7 +118,7 @@ export const promptDefaultCalendar = (
 };
 
 /** Asks for the folder and address of every configured calendar, then offers to add more. */
-export const configure = (rl: Interface, existing: Calendars): Effect.Effect<Calendars, KhalError> =>
+export const configure = (rl: Interface, existing: Calendars): Effect.Effect<Calendars, AppError> =>
   Effect.gen(function* () {
     let calendars: Calendars = existing;
     const pathsExcept = (name: string): string[] =>
@@ -142,9 +137,9 @@ export const configure = (rl: Interface, existing: Calendars): Effect.Effect<Cal
         undefined,
       );
       const name = yield* Result.match(interpretName(answer, names), {
-        onFailure: (msg): Effect.Effect<string | undefined | null, KhalError> =>
+        onFailure: (msg): Effect.Effect<string | undefined | null, AppError> =>
           Effect.flatMap(say(msg), () => Effect.succeed(null)),
-        onSuccess: (n): Effect.Effect<string | undefined | null, KhalError> => Effect.succeed(n),
+        onSuccess: (n): Effect.Effect<string | undefined | null, AppError> => Effect.succeed(n),
       });
       if (name === null) continue;
       if (name === undefined) {
@@ -166,7 +161,7 @@ export interface SetupIo {
   readonly log: (line: string) => void;
 }
 
-export const setup = (settings: Settings, io: SetupIo): Effect.Effect<void, KhalError> =>
+export const setup = (settings: Settings, io: SetupIo): Effect.Effect<void, AppError> =>
   Effect.gen(function* () {
     if (!io.isTTY)
       return yield* Effect.fail(new InvalidInput({ message: "setup needs an interactive terminal." }));

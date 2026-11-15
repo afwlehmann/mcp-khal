@@ -73,8 +73,8 @@ const classify = (file: string, lines: readonly string[]): Classified => {
 
 /**
  * Reads all `*.ics` files directly in `dir`. Files are visited in path order; when several files
- * hold the same UID, the first one is used and each further one is reported (khal skips such files
- * without a word).
+ * hold the same UID, the first one is used and each further one is reported, never
+ * dropped silently.
  */
 export const readCalendar = (dir: string): Effect.Effect<CalendarRead> =>
   Effect.tryPromise({ try: () => readdir(dir), catch: (u) => u }).pipe(

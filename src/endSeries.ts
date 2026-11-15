@@ -7,7 +7,7 @@ import {
   requireOccurrence,
   ruleInstants,
 } from "./editEvent.js";
-import { InvalidInput, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput } from "./errors.js";
 import { events, isMaster, mapEvents, type Prop, prop, setProp } from "./ics.js";
 import {
   checkFile,
@@ -96,7 +96,7 @@ export const endSeriesLines = (
   });
 
 /** Ends a recurring event after `lastDate`; the date has to be a real occurrence. */
-export const endSeries = (settings: Settings, p: EndParams, now: Date): Effect.Effect<string, KhalError> =>
+export const endSeries = (settings: Settings, p: EndParams, now: Date): Effect.Effect<string, AppError> =>
   Effect.gen(function* () {
     const stored = yield* findEvent(settings, p.calendar, p.uid);
     const env = envOf(settings, p.calendar);

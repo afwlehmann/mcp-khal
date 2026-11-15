@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { resolveAddress, resolveAlarm, resolveCalendar } from "./config.js";
-import { InvalidInput, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput } from "./errors.js";
 import { stamp, unfoldLines } from "./ics.js";
 import { parseEventTimes } from "./range.js";
 import { buildIcs, type RecurrenceSpec } from "./recurrence.js";
@@ -45,7 +45,7 @@ export const newEvent = (
   input: NewEventInput,
   uid: string,
   now: Date,
-): Effect.Effect<string, KhalError> => {
+): Effect.Effect<string, AppError> => {
   const warning = titleWarning(input.summary);
   return Effect.map(create(settings, input, uid, now), (out) =>
     warning === undefined ? out : `${out}\n${warning}`,
@@ -57,7 +57,7 @@ const create = (
   { recurrence, attendees = [], organizer, calendar: named, start, end, duration, zone, ...p }: NewEventInput,
   uid: string,
   now: Date,
-): Effect.Effect<string, KhalError> => {
+): Effect.Effect<string, AppError> => {
   const invited = attendees.length > 0;
   if (!invited && organizer !== undefined)
     return Effect.fail(new InvalidInput({ message: "organizer is only valid together with attendees" }));

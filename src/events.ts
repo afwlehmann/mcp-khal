@@ -181,7 +181,7 @@ const render = (
   endW: Wall,
 ): CalendarEvent => {
   const startDate = isoDate(startW);
-  // an all-day end is exclusive (the next day at 00:00); khal shows the last day
+  // an all-day end is exclusive (the next day at 00:00); the output shows the last day
   const endDate = i.allDay
     ? ((last) => (last < startDate ? startDate : last))(isoDate(dayBefore(endW)))
     : isoDate(endW);

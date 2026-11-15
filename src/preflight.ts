@@ -1,13 +1,13 @@
 import { access, constants, stat } from "node:fs/promises";
 import { Effect, Result } from "effect";
-import type { KhalError } from "./errors.js";
+import type { AppError } from "./errors.js";
 import type { Settings } from "./settings.js";
 import { collect, collectAll, problem, toInvalidInput, type Validated, valid } from "./validation.js";
 
 /** Runs an effect as a validation: a failure becomes one problem instead of aborting the checks. */
 const attempt = <A>(
-  eff: Effect.Effect<A, KhalError>,
-  describe: (e: KhalError) => string,
+  eff: Effect.Effect<A, AppError>,
+  describe: (e: AppError) => string,
 ): Effect.Effect<Validated<A>> =>
   Effect.match(eff, { onFailure: (e) => problem(describe(e)), onSuccess: (a) => valid(a) });
 
@@ -24,7 +24,7 @@ export const checkVdirs = (settings: Settings): Effect.Effect<Validated<readonly
                 if (!(await stat(c.path)).isDirectory()) throw new Error("not a directory");
                 await access(c.path, constants.R_OK | constants.W_OK);
               },
-              catch: (u) => u as KhalError,
+              catch: (u) => u as AppError,
             }),
             () => `calendars.${name}.path ${c.path} is not a directory that can be read and written`,
           ),
@@ -37,7 +37,7 @@ export const checkVdirs = (settings: Settings): Effect.Effect<Validated<readonly
  * Checks at server start that what the configuration says matches the machine. All checks run and
  * all their problems are reported together.
  */
-export const preflight = (settings: Settings): Effect.Effect<Settings, KhalError> =>
+export const preflight = (settings: Settings): Effect.Effect<Settings, AppError> =>
   Effect.gen(function* () {
     const configFile: Validated<void> =
       settings.configSource === "MCP_KHAL_CONFIG" && !settings.configFound

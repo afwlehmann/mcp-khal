@@ -3,7 +3,7 @@ import { link, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Effect, Result } from "effect";
 import { calendarOf } from "./config.js";
-import { InvalidInput, ioError, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput, ioError } from "./errors.js";
 import {
   classifyFile,
   decodeIcs,
@@ -179,7 +179,7 @@ export const findEvent = (
   settings: Settings,
   calendar: string,
   uid: string,
-): Effect.Effect<StoredEvent, KhalError> =>
+): Effect.Effect<StoredEvent, AppError> =>
   Effect.gen(function* () {
     const wanted = uid.trim();
     if (wanted === "" || wanted.length > MAX_NAME || CONTROL.test(wanted))
@@ -304,7 +304,7 @@ export const createEvent = (
   file: string,
   lines: readonly string[],
   linkFile: typeof link = link,
-): Effect.Effect<void, KhalError> => {
+): Effect.Effect<void, AppError> => {
   const out = stripMethod(lines);
   const bad = malformed(out);
   if (bad !== undefined) return Effect.fail(bad);
@@ -348,7 +348,7 @@ export const writeEvent = (
   file: string,
   lines: readonly string[],
   etag?: string,
-): Effect.Effect<void, KhalError> => {
+): Effect.Effect<void, AppError> => {
   const out = stripMethod(lines);
   const bad = malformed(out);
   if (bad !== undefined) return Effect.fail(bad);

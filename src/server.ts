@@ -4,7 +4,7 @@ import { z } from "zod";
 import { listCalendars } from "./calendars.js";
 import { MAX_DESCRIPTION, MAX_TITLE, updateEvent } from "./editEvent.js";
 import { endSeries } from "./endSeries.js";
-import type { KhalError } from "./errors.js";
+import type { AppError } from "./errors.js";
 import { type EventsResult, eventsInRange, listEvents, searchEvents } from "./events.js";
 import { newEvent } from "./newEvent.js";
 import { MAX_ADDRESS, RecurrenceSpec } from "./recurrence.js";
@@ -20,7 +20,7 @@ const text = (t: string, isError = false): ToolResult => ({
 });
 
 /** Run an effect at the edge: failures become MCP error results, never exceptions. */
-const respond = <A>(eff: Effect.Effect<A, KhalError>, render: (a: A) => string): Promise<ToolResult> =>
+const respond = <A>(eff: Effect.Effect<A, AppError>, render: (a: A) => string): Promise<ToolResult> =>
   Effect.runPromise(
     Effect.match(eff, {
       onFailure: (e) => text(`${e._tag}: ${e.message}`, true),

@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Effect, Result } from "effect";
-import { InvalidInput, ioError, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput, ioError } from "./errors.js";
 import {
   collect,
   collectAll,
@@ -499,29 +499,29 @@ export const resolveAddress = (
 // ---------- effects (the path is always passed in) ----------
 
 /** The text of the file; `undefined` when it does not exist. */
-export const readConfigText = (path: string): Effect.Effect<string | undefined, KhalError> =>
+export const readConfigText = (path: string): Effect.Effect<string | undefined, AppError> =>
   Effect.tryPromise({
     try: () => readFile(path, "utf8"),
     catch: (u) => u as NodeJS.ErrnoException,
   }).pipe(
     Effect.matchEffect({
-      onFailure: (e): Effect.Effect<string | undefined, KhalError> =>
+      onFailure: (e): Effect.Effect<string | undefined, AppError> =>
         e.code === "ENOENT" ? Effect.succeed(undefined) : Effect.fail(ioError(e)),
       onSuccess: (content) => Effect.succeed(content),
     }),
   );
 
 /** The parsed file alone; `undefined` when it does not exist. Problems of the content accumulate. */
-export const readConfig = (path: string): Effect.Effect<Validated<Config> | undefined, KhalError> =>
+export const readConfig = (path: string): Effect.Effect<Validated<Config> | undefined, AppError> =>
   Effect.map(readConfigText(path), (text) => (text === undefined ? undefined : parseConfigValidated(text)));
 
 /** A missing file is the default configuration, not an error. */
-export const loadConfig = (path: string): Effect.Effect<Config, KhalError> =>
+export const loadConfig = (path: string): Effect.Effect<Config, AppError> =>
   Effect.flatMap(readConfig(path), (read) =>
     read === undefined ? Effect.succeed(defaultConfig) : Effect.fromResult(orInvalidInput(read)),
   );
 
-export const saveConfig = (path: string, c: Config): Effect.Effect<void, KhalError> =>
+export const saveConfig = (path: string, c: Config): Effect.Effect<void, AppError> =>
   Effect.gen(function* () {
     yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: ioError });
     yield* Effect.tryPromise({ try: () => writeFile(path, serializeConfig(c), "utf8"), catch: ioError });

@@ -4,7 +4,7 @@ export class InvalidInput extends Data.TaggedError("InvalidInput")<{ readonly me
 export class IoError extends Data.TaggedError("IoError")<{ readonly message: string }> {}
 
 /** Every failure of the server: bad input, or a file system problem. */
-export type KhalError = InvalidInput | IoError;
+export type AppError = InvalidInput | IoError;
 
 export const ioError = (u: unknown): IoError =>
   new IoError({ message: u instanceof Error ? u.message : String(u) });

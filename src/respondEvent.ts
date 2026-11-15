@@ -1,7 +1,7 @@
 import { Effect, Result } from "effect";
 import { resolveAddress } from "./config.js";
 import { editInstance, isoOf, requireOccurrence, type Scope, scopeOf } from "./editEvent.js";
-import { InvalidInput, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput } from "./errors.js";
 import { type Event, events, isMaster, mapEvents, mapProps, prop, props } from "./ics.js";
 import { checkFile, markEvent, normAddress, withoutMethod } from "./series.js";
 import type { Settings } from "./settings.js";
@@ -121,7 +121,7 @@ export const respondToEvent = (
   settings: Settings,
   p: RespondParams,
   now: Date,
-): Effect.Effect<string, KhalError> =>
+): Effect.Effect<string, AppError> =>
   Effect.gen(function* () {
     const stored = yield* findEvent(settings, p.calendar, p.uid);
     const address = yield* Effect.fromResult(resolveAddress(settings.calendars, p.calendar));

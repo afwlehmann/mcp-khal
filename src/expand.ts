@@ -13,8 +13,7 @@ import {
   type Zone,
 } from "./timezone.js";
 
-// Pure expansion of one event file (main event plus exceptions) into its occurrences. It replaces
-// asking khal which days an event shows up on. Rules are expanded on wall-clock values and each
+// Pure expansion of one event file (main event plus exceptions) into its occurrences. Rules are expanded on wall-clock values and each
 // result is converted to an instant with the zone of the event, so DST never shifts local times.
 
 type V<A> = Result.Result<A, InvalidInput>;

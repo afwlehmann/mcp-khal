@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { Effect, Result } from "effect";
 import { resolveAddress } from "./config.js";
-import { InvalidInput, type KhalError } from "./errors.js";
+import { type AppError, InvalidInput } from "./errors.js";
 import { hostOccurrenceDatesIn, type Instance, occurrencesIn } from "./expand.js";
 import { type Event, events, isMaster, mapEvents, type Prop, prop, setProp } from "./ics.js";
 import { titleWarning } from "./newEvent.js";
@@ -576,7 +576,7 @@ export const updateEvent = (
   p: UpdateParams,
   newUid: string,
   now: Date,
-): Effect.Effect<string, KhalError> =>
+): Effect.Effect<string, AppError> =>
   Effect.gen(function* () {
     const stored = yield* findEvent(settings, p.calendar, p.uid);
     const { scope, date } = yield* Effect.fromResult(scopeOf(p));

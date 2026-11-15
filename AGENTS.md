@@ -1,7 +1,7 @@
 # AGENTS.md
 
 - Build: `npm run build` (tsc → `dist/`). ESM, NodeNext; import with `.js` suffixes.
-- Style: functional. Pure builders/validators return `Result<KhalError, A>`; no thrown exceptions. Side effects (reading and writing the `.ics` files) only in the thin effect layers (`src/reader.ts`, `src/vdir.ts`); everything else is pure. There is no khal and no subprocess: the server parses and writes iCalendar files itself.
+- Style: functional. Pure builders/validators return `Result<AppError, A>`; no thrown exceptions. Side effects (reading and writing the `.ics` files) only in the thin effect layers (`src/reader.ts`, `src/vdir.ts`); everything else is pure. There is no khal and no subprocess: the server parses and writes iCalendar files itself.
 - User-supplied values (calendar names, uids, dates, times, durations, zone names, text) are validated before use: dates and times by the strict parsers in `src/range.ts`, zones by `ianaZone` (`src/timezone.ts`), text by the ICS escaping in `src/ics.ts`, calendar and uid by length and the vdir lookup (a calendar is addressed by its configured `path`, never by a path from a call; file names are plain tokens).
 - Update README.md when tools change.
 - No function reads `process.env`, the home/tmp directory, the clock, the host time zone, random values or the config file itself. `src/index.ts` and `src/cli.ts` (the process edge) read them once and pass them on: environment, config and host zone become a `Settings` object (`src/settings.ts`), the uid and clock are injected (`ServerDeps`). Keep functions pure where possible; tests build `Settings` with `testSettings` (`src/testlib.ts`) instead of mutating global state.
