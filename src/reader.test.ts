@@ -110,5 +110,78 @@ describe("readCalendar", () => {
     const r = await Effect.runPromise(readCalendar(join(dir, "nope")));
     expect(r.events).toEqual([]);
     expect(r.problems[0]).toContain("cannot list directory");
+    expect(r.warnings).toEqual([]);
+  });
+
+  it("reads files with a BOM, LF or lone CR line endings and tab folds", async () => {
+    const lines = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:uid-long",
+      "SUMMARY:a long title",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ];
+    await writeFile(
+      join(dir, "bom.ics"),
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(lines.join("\r\n"))]),
+    );
+    await writeFile(join(dir, "lf.ics"), lines.join("\n").replace("uid-long", "uid-lf"));
+    await writeFile(join(dir, "cr.ics"), lines.join("\r").replace("uid-long", "uid-cr"));
+    await writeFile(
+      join(dir, "tab.ics"),
+      lines.join("\r\n").replace("uid-long", "uid-tab").replace("a long", "a\r\n\t long"),
+    );
+    const r = await read();
+    expect(r.problems).toEqual([]);
+    expect(r.events.map((e) => e.uid)).toEqual(["uid-long", "uid-cr", "uid-lf", "uid-tab"]);
+    expect(r.events.find((e) => e.uid === "uid-tab")?.lines).toContain("SUMMARY:a long title");
+  });
+
+  it("reports a file that is not UTF-8", async () => {
+    await writeFile(join(dir, "latin1.ics"), Buffer.from([0x53, 0x3a, 0xe4, 0x0a]));
+    const r = await read();
+    expect(r.events).toEqual([]);
+    expect(r.problems).toEqual([`${join(dir, "latin1.ics")}: the file is not valid UTF-8, skipped`]);
+  });
+
+  it("reports a file with a VTODO next to the VEVENT, one with only a VTODO, and a malformed one", async () => {
+    const wrap = (...body: string[]): string =>
+      ["BEGIN:VCALENDAR", ...body, "END:VCALENDAR", ""].join("\r\n");
+    await writeFile(
+      join(dir, "mixed.ics"),
+      wrap("BEGIN:VEVENT", "UID:m", "END:VEVENT", "BEGIN:VTODO", "UID:m", "END:VTODO"),
+    );
+    await writeFile(join(dir, "todo.ics"), wrap("BEGIN:VTODO", "UID:t", "END:VTODO"));
+    await writeFile(join(dir, "open.ics"), wrap("BEGIN:VEVENT", "UID:o"));
+    await writeFile(
+      join(dir, "ok.ics"),
+      wrap("BEGIN:X-FOO", "END:X-FOO", "BEGIN:VEVENT", "UID:ok", "END:VEVENT"),
+    );
+    const r = await read();
+    expect(r.events.map((e) => e.uid)).toEqual(["ok"]);
+    expect(r.problems.map((p) => p.replace(`${dir}/`, ""))).toEqual([
+      "mixed.ics: several component types in one file (VEVENT, VTODO), skipped",
+      "open.ics: malformed (BEGIN:VEVENT (content line 2) has no matching END:VEVENT), skipped",
+      "todo.ics: holds no VEVENT (only VTODO), skipped",
+    ]);
+  });
+
+  it("warns about a calendar object without PRODID, but still reads the event", async () => {
+    await writeFile(
+      join(dir, "a.ics"),
+      ["BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:a", "END:VEVENT", "END:VCALENDAR", ""].join(
+        "\r\n",
+      ),
+    );
+    await writeFile(join(dir, "b.ics"), ics("b"));
+    const r = await read();
+    expect(r.events.map((e) => e.uid)).toEqual(["a", "b"]);
+    expect(r.problems).toEqual([]);
+    expect(r.warnings).toEqual([
+      `${join(dir, "a.ics")}: PRODID is missing (RFC 5545 3.6)`,
+      `${join(dir, "b.ics")}: PRODID is missing (RFC 5545 3.6)`,
+      `${join(dir, "b.ics")}: VERSION is missing (RFC 5545 3.6)`,
+    ]);
   });
 });

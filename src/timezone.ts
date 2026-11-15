@@ -247,7 +247,35 @@ const offsetMinutesOf = (c: ICAL.Component, name: string): V<number> => {
   const m = typeof raw === "string" ? /^([+-])(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw) : null;
   if (m === null) return fail(`the VTIMEZONE has no valid ${name.toUpperCase()}`);
   const seconds = Number(m[2]) * 3600 + Number(m[3]) * 60 + Number(m[4] ?? 0);
+  // RFC 5545 3.3.14: minutes and seconds are below 60, and "-0000" is not allowed
+  if (Number(m[3]) > 59 || Number(m[4] ?? 0) > 59) {
+    return fail(`the VTIMEZONE has no valid ${name.toUpperCase()}: minutes and seconds must be below 60`);
+  }
+  if (m[1] === "-" && seconds === 0) {
+    return fail(`the VTIMEZONE has no valid ${name.toUpperCase()}: a zero offset is written +0000`);
+  }
   return Result.succeed(((m[1] === "-" ? -1 : 1) * seconds) / 60);
+};
+
+/**
+ * RFC 5545 3.6.5: the DTSTART of an observance is local time (neither UTC nor with a TZID), and
+ * the UNTIL of its rule is UTC.
+ */
+const checkObservance = (sub: ICAL.Component): V<undefined> => {
+  const start = sub.getFirstProperty("dtstart");
+  const raw = start?.jCal[3];
+  if (
+    start !== null &&
+    (typeof raw !== "string" || raw.endsWith("Z") || start.getParameter("tzid") !== undefined)
+  ) {
+    return fail("the DTSTART of a VTIMEZONE observance must be a local date-time (no Z, no TZID)");
+  }
+  const rule = sub.getFirstProperty("rrule")?.jCal[3];
+  const until = typeof rule === "object" && rule !== null ? (rule as { until?: unknown }).until : undefined;
+  if (until !== undefined && !(typeof until === "string" && until.endsWith("Z"))) {
+    return fail("the UNTIL of a VTIMEZONE observance rule must be a UTC date-time");
+  }
+  return Result.succeed(undefined);
 };
 
 /** Transitions of one STANDARD or DAYLIGHT sub-component up to `HORIZON_YEAR`. */
@@ -257,6 +285,7 @@ const transitionsOf = (sub: ICAL.Component): V<readonly Transition[]> =>
     const to = yield* offsetMinutesOf(sub, "tzoffsetto");
     const start = sub.getFirstPropertyValue("dtstart");
     if (!(start instanceof ICAL.Time)) return yield* fail("the VTIMEZONE has no DTSTART");
+    yield* checkObservance(sub);
     const at = (w: Wall): Transition => ({ atMs: wallToUtcMs(w) - from * MINUTE_MS, from, to });
     const rdates = sub
       .getAllProperties("rdate")
@@ -278,7 +307,8 @@ export const zoneFromVtimezone = (vtimezone: ICAL.Component): V<Zone> =>
   Result.gen(function* () {
     const tzid = vtimezone.getFirstPropertyValue("tzid");
     const subs = [...vtimezone.getAllSubcomponents("standard"), ...vtimezone.getAllSubcomponents("daylight")];
-    const id = typeof tzid === "string" ? tzid : "VTIMEZONE";
+    if (typeof tzid !== "string" || tzid === "") return yield* fail("a VTIMEZONE has no TZID");
+    const id = tzid;
     const lists: Transition[] = [];
     for (const sub of subs) lists.push(...(yield* transitionsOf(sub)));
     const sorted = [...lists].sort((a, b) => a.atMs - b.atMs);
@@ -293,15 +323,18 @@ const tzidOf = (c: ICAL.Component): unknown => c.getFirstPropertyValue("tzid");
 
 /**
  * Zone for a TZID. RFC 5545 3.2.19: a TZID names the VTIMEZONE of the file, so that one comes
- * first, even when it has the name of an IANA or Windows zone. Only a file without a usable
- * VTIMEZONE of that name falls back to an IANA zone of that name, then to a Windows zone name.
- * Anything else is an error: such a time is never read as floating.
+ * first, even when it has the name of an IANA or Windows zone (a stale definition wins over the
+ * current tz database), and a VTIMEZONE that is present but invalid is reported, never replaced by
+ * a guess. Only a file without a VTIMEZONE of that name falls back to an IANA zone of that name
+ * (legacy aliases like "US/Eastern" included), then to a Windows zone name (tolerated deviation:
+ * Outlook writes CLDR names without a VTIMEZONE). A TZID like "GMT+0100" or "+01:00" is no zone
+ * name. Anything else is an error: such a time is never read as floating.
  */
 export const resolveZone = (tzid: string, vtimezones: readonly ICAL.Component[]): V<Zone> => {
   const own = vtimezones.find((v) => tzidOf(v) === tzid);
-  const fromFile = own === undefined ? undefined : zoneFromVtimezone(own);
-  if (fromFile !== undefined && Result.isSuccess(fromFile)) return fromFile;
-  const iana = ianaZone(tzid);
+  if (own !== undefined) return zoneFromVtimezone(own);
+  // the engine accepts offsets like "+01:00" as zone names; a TZID is a name, not an offset
+  const iana = /^[+-]/.test(tzid) ? fail(`unknown time zone "${tzid}"`) : ianaZone(tzid);
   if (Result.isSuccess(iana)) return iana;
   const windows = WINDOWS_ZONES[tzid];
   if (windows !== undefined) return ianaZone(windows);

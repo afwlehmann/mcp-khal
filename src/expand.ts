@@ -35,7 +35,6 @@ export const MAX_OCCURRENCES = 10_000;
 export const MAX_WALKED = 300_000;
 
 const DAY_MS = 86_400_000;
-const HOUR_MS = 3_600_000;
 
 /** One occurrence: instants (epoch ms, `end` exclusive), whether it is an all-day event, and its start date. */
 export interface Instance {
@@ -68,6 +67,322 @@ const sequence = <A, B>(xs: readonly A[], f: (a: A) => V<B>): V<readonly B[]> =>
 const attempt = <A>(f: () => A, message: string): V<A> =>
   Result.try({ try: f, catch: () => new InvalidInput({ message }) });
 
+// ---- strict reading of the text (RFC 5545 3.3, 3.8) ----
+//
+// ical.js is lenient (it reads "20240101T100000-0800" as a local time and drops a lowercase "z"),
+// and its jCal output has already lost what was written. So the values the expansion depends on
+// are checked on the raw text first; whatever is not standard is reported, never guessed. The
+// tolerated deviations (BOM, LF and lone CR line ends, tab folds, lowercase property names) are
+// the ones handled here and in the reader of the files.
+
+interface RawProp {
+  /** which component (in order of its BEGIN line) the property belongs to */
+  readonly comp: number;
+  /** the innermost component type, upper case */
+  readonly owner: string;
+  readonly name: string;
+  readonly params: ReadonlyMap<string, string>;
+  readonly value: string;
+}
+
+const splitOutsideQuotes = (s: string, sep: string): readonly string[] => {
+  const parts: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (const ch of s) {
+    if (ch === '"') quoted = !quoted;
+    if (ch === sep && !quoted) {
+      parts.push(current);
+      current = "";
+    } else current += ch;
+  }
+  parts.push(current);
+  return parts;
+};
+
+const colonOutsideQuotes = (line: string): number => {
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"') quoted = !quoted;
+    else if (line[i] === ":" && !quoted) return i;
+  }
+  return -1;
+};
+
+const rawProps = (lines: readonly string[]): readonly RawProp[] => {
+  const out: RawProp[] = [];
+  const stack: { readonly id: number; readonly type: string }[] = [];
+  let next = 0;
+  const unfolded = lines
+    .join("\n")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/\n[ \t]/g, "")
+    .split("\n");
+  for (const line of unfolded) {
+    const colon = colonOutsideQuotes(line);
+    if (colon < 0) continue;
+    const [rawName = "", ...rawParams] = splitOutsideQuotes(line.slice(0, colon), ";");
+    const name = rawName.toUpperCase();
+    const value = line.slice(colon + 1);
+    if (name === "BEGIN") {
+      stack.push({ id: next++, type: value.trim().toUpperCase() });
+    } else if (name === "END") {
+      stack.pop();
+    } else {
+      const params = new Map(
+        rawParams.map((p) => {
+          const eq = p.indexOf("=");
+          const v = eq < 0 ? "" : p.slice(eq + 1);
+          return [(eq < 0 ? p : p.slice(0, eq)).toUpperCase(), v.replace(/^"(.*)"$/, "$1")] as const;
+        }),
+      );
+      const top = stack[stack.length - 1];
+      out.push({ comp: top?.id ?? -1, owner: top?.type ?? "", name, params, value });
+    }
+  }
+  return out;
+};
+
+const DATE_TEXT = /^(\d{4})(\d{2})(\d{2})$/;
+const DATE_TIME_TEXT = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/;
+const DURATION_TEXT = /^[+-]?P(?:\d+W|(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+S)?)?)$/;
+
+const daysInMonth = (year: number, month: number): number => {
+  const d = new Date(0);
+  d.setUTCFullYear(year, month, 0);
+  return d.getUTCDate();
+};
+
+const isRealDate = (y: number, m: number, d: number): boolean =>
+  m >= 1 && m <= 12 && d >= 1 && d <= daysInMonth(y, m);
+
+/** RFC 5545 3.3.6: `dur-value` with at least one component (and no years or months). */
+const isDurationText = (v: string): boolean => DURATION_TEXT.test(v) && !/[PT]$/.test(v);
+
+const dateTimeProblem = (
+  name: string,
+  type: string,
+  tzid: string | undefined,
+  item: string,
+): string | undefined => {
+  if (type === "DATE") {
+    const m = DATE_TEXT.exec(item);
+    if (m === null || !isRealDate(Number(m[1]), Number(m[2]), Number(m[3]))) {
+      return `${name} "${item}" is not a valid DATE (YYYYMMDD)`;
+    }
+    return tzid === undefined ? undefined : `${name} is a DATE and must not have a TZID`;
+  }
+  const m = DATE_TIME_TEXT.exec(item);
+  if (m === null) {
+    return DATE_TEXT.test(item)
+      ? `${name} "${item}" is a DATE: it needs VALUE=DATE`
+      : `${name} "${item}" is not a valid DATE-TIME (YYYYMMDDTHHMMSS, with Z for UTC)`;
+  }
+  const [hour, minute, second] = [Number(m[4]), Number(m[5]), Number(m[6])];
+  // a leap second is only read as the last second of a UTC day (and then as 59)
+  const leap = second === 60 && m[7] === "Z" && hour === 23 && minute === 59;
+  if (
+    !isRealDate(Number(m[1]), Number(m[2]), Number(m[3])) ||
+    hour > 23 ||
+    minute > 59 ||
+    (second > 59 && !leap)
+  ) {
+    return `${name} "${item}" is not a valid DATE-TIME`;
+  }
+  return m[7] === "Z" && tzid !== undefined ? `${name} is in UTC (Z) and must not have a TZID` : undefined;
+};
+
+const periodProblem = (name: string, tzid: string | undefined, item: string): string | undefined => {
+  const [a, b, ...rest] = item.split("/");
+  if (a === undefined || b === undefined || rest.length > 0) return `${name} "${item}" is not a valid PERIOD`;
+  const first = dateTimeProblem(name, "DATE-TIME", tzid, a);
+  if (first !== undefined) return first;
+  if (/^[+-]?P/.test(b)) {
+    return isDurationText(b) && !b.startsWith("-") && /[1-9]/.test(b)
+      ? undefined
+      : `the duration of the PERIOD "${item}" must be positive`;
+  }
+  const second = dateTimeProblem(name, "DATE-TIME", tzid, b);
+  if (second !== undefined) return second;
+  const ms = (s: string): number => {
+    const w = DATE_TIME_TEXT.exec(s) ?? [];
+    return Date.UTC(Number(w[1]), Number(w[2]) - 1, Number(w[3]), Number(w[4]), Number(w[5]), Number(w[6]));
+  };
+  return ms(a) < ms(b) ? undefined : `the PERIOD "${item}" must start before it ends`;
+};
+
+const timeProblem = (p: RawProp): string | undefined => {
+  const multi = p.name === "RDATE" || p.name === "EXDATE";
+  const type = (p.params.get("VALUE") ?? "DATE-TIME").toUpperCase();
+  if (p.name === "EXDATE" && type === "PERIOD") return "EXDATE with PERIOD values is not supported";
+  const allowed = p.name === "RDATE" ? ["DATE", "DATE-TIME", "PERIOD"] : ["DATE", "DATE-TIME"];
+  if (!allowed.includes(type)) return `${p.name} cannot have VALUE=${type}`;
+  const tzid = p.params.get("TZID");
+  return (multi ? p.value.split(",") : [p.value])
+    .map((item) =>
+      type === "PERIOD" ? periodProblem(p.name, tzid, item) : dateTimeProblem(p.name, type, tzid, item),
+    )
+    .find((m) => m !== undefined);
+};
+
+type Anchor = "date" | "floating" | "utc" | "tzid";
+
+const anchorOf = (p: RawProp): Anchor =>
+  DATE_TEXT.test(p.value)
+    ? "date"
+    : p.value.endsWith("Z")
+      ? "utc"
+      : p.params.has("TZID")
+        ? "tzid"
+        : "floating";
+
+const WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const FREQS = ["SECONDLY", "MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"];
+const BY_RANGES: Readonly<Record<string, readonly [number, number, boolean]>> = {
+  BYSECOND: [0, 60, false],
+  BYMINUTE: [0, 59, false],
+  BYHOUR: [0, 23, false],
+  BYMONTH: [1, 12, false],
+  BYMONTHDAY: [1, 31, true],
+  BYYEARDAY: [1, 366, true],
+  BYWEEKNO: [1, 53, true],
+  BYSETPOS: [1, 366, true],
+};
+
+/** RFC 5545 3.3.10: UNTIL has the type of DTSTART (a UTC date-time for UTC, TZID and observances). */
+const untilProblem = (until: string, anchor: Anchor | "observance" | undefined): string | undefined => {
+  const isDate = DATE_TEXT.test(until);
+  const bad = dateTimeProblem("UNTIL", isDate ? "DATE" : "DATE-TIME", undefined, until);
+  if (bad !== undefined) return bad;
+  const utc = until.endsWith("Z");
+  switch (anchor) {
+    case undefined:
+      return undefined;
+    case "date":
+      return isDate ? undefined : "UNTIL must be a DATE when DTSTART is a DATE";
+    case "floating":
+      return !isDate && !utc ? undefined : "UNTIL must be a floating date-time when DTSTART is floating";
+    default:
+      return !isDate && utc
+        ? undefined
+        : "UNTIL must be a UTC date-time (ending in Z) when DTSTART is UTC, has a TZID or is an observance";
+  }
+};
+
+const byValueProblem = (key: string, value: string): string | undefined => {
+  const range = BY_RANGES[key];
+  if (range === undefined) return undefined;
+  const [lo, hi, signed] = range;
+  const ok = value
+    .split(",")
+    .every(
+      (s) =>
+        (signed ? /^[+-]?\d+$/ : /^\d+$/).test(s) && Math.abs(Number(s)) >= lo && Math.abs(Number(s)) <= hi,
+    );
+  return ok ? undefined : `${key}=${value} is out of range`;
+};
+
+/** A BYDAY item: a weekday, with a number (1 to 53, signed) for MONTHLY and YEARLY only. */
+const bydayProblem = (value: string, freq: string, weekno: boolean): string | undefined => {
+  const items = value.split(",").map((s) => /^([+-]?\d{1,2})?(SU|MO|TU|WE|TH|FR|SA)$/.exec(s));
+  if (items.some((m) => m === null)) return `BYDAY=${value} is not a list of weekdays`;
+  const numbers = items.flatMap((m) => {
+    const n = m?.[1];
+    return n === undefined ? [] : [Math.abs(Number(n))];
+  });
+  if (numbers.some((n) => n < 1 || n > 53)) return `BYDAY=${value} has a number out of range`;
+  if (numbers.length > 0 && freq !== "MONTHLY" && freq !== "YEARLY") {
+    return "a number in BYDAY is only valid for FREQ=MONTHLY or YEARLY";
+  }
+  return numbers.length > 0 && weekno ? "a number in BYDAY is not valid together with BYWEEKNO" : undefined;
+};
+
+const rruleProblem = (value: string, anchor: Anchor | "observance" | undefined): string | undefined => {
+  const parts = value.split(";").map((p) => {
+    const eq = p.indexOf("=");
+    return [
+      (eq < 0 ? p : p.slice(0, eq)).toUpperCase(),
+      eq < 0 ? "" : p.slice(eq + 1).toUpperCase(),
+    ] as const;
+  });
+  const keys = parts.map(([k]) => k);
+  if (new Set(keys).size !== keys.length) return "a part of the RRULE occurs more than once";
+  const known = ["FREQ", "UNTIL", "COUNT", "INTERVAL", "BYDAY", "WKST", ...Object.keys(BY_RANGES)];
+  const unknown = keys.find((k) => !known.includes(k));
+  if (unknown !== undefined) return `unknown RRULE part "${unknown}"`;
+  const part = new Map(parts);
+  const freq = part.get("FREQ");
+  if (freq === undefined) return "an RRULE needs FREQ";
+  if (!FREQS.includes(freq)) return `FREQ=${freq} is not valid`;
+  if (part.has("COUNT") && part.has("UNTIL")) return "an RRULE has COUNT or UNTIL, never both";
+  const count = part.get("COUNT");
+  if (count !== undefined && !(/^\d+$/.test(count) && Number(count) > 0))
+    return `COUNT=${count} is not a positive integer`;
+  const interval = part.get("INTERVAL");
+  if (interval !== undefined && !(/^\d+$/.test(interval) && Number(interval) > 0)) {
+    return `INTERVAL=${interval} is not a positive integer`;
+  }
+  const wkst = part.get("WKST");
+  if (wkst !== undefined && !WEEKDAYS.includes(wkst)) return `WKST=${wkst} is not a weekday`;
+  const until = part.get("UNTIL");
+  const untilBad = until === undefined ? undefined : untilProblem(until, anchor);
+  if (untilBad !== undefined) return untilBad;
+  const byBad = parts.map(([k, v]) => byValueProblem(k, v)).find((m) => m !== undefined);
+  if (byBad !== undefined) return byBad;
+  const byday = part.get("BYDAY");
+  const bydayBad = byday === undefined ? undefined : bydayProblem(byday, freq, part.has("BYWEEKNO"));
+  if (bydayBad !== undefined) return bydayBad;
+  // the table of RFC 5545 3.3.10: "N/A" cells must not be used
+  if (part.has("BYWEEKNO") && freq !== "YEARLY") return "BYWEEKNO is only valid for FREQ=YEARLY";
+  if (part.has("BYYEARDAY") && ["DAILY", "WEEKLY", "MONTHLY"].includes(freq)) {
+    return `BYYEARDAY is not valid for FREQ=${freq}`;
+  }
+  if (part.has("BYMONTHDAY") && freq === "WEEKLY") return "BYMONTHDAY is not valid for FREQ=WEEKLY";
+  const others = keys.filter((k) => k.startsWith("BY") && k !== "BYSETPOS");
+  return part.has("BYSETPOS") && others.length === 0 ? "BYSETPOS needs another BYxxx rule part" : undefined;
+};
+
+const ONCE = ["DTSTART", "DTEND", "DURATION", "RECURRENCE-ID"];
+
+/** The first problem with the dates, durations and rules of the events and observances of the file. */
+const rawProblem = (lines: readonly string[]): string | undefined => {
+  const props = rawProps(lines);
+  const relevant = props.filter((p) => ["VEVENT", "STANDARD", "DAYLIGHT"].includes(p.owner));
+  const perProp = relevant
+    .map((p) => {
+      if (["DTSTART", "DTEND", "RECURRENCE-ID", "RDATE", "EXDATE"].includes(p.name)) return timeProblem(p);
+      if (p.name === "DURATION" && p.owner === "VEVENT" && !isDurationText(p.value)) {
+        return `DURATION "${p.value}" is not a valid duration (no years or months; weeks stand alone)`;
+      }
+      if (p.name === "RRULE") {
+        const start = relevant.find((s) => s.comp === p.comp && s.name === "DTSTART");
+        return rruleProblem(
+          p.value,
+          p.owner === "VEVENT" ? (start === undefined ? undefined : anchorOf(start)) : "observance",
+        );
+      }
+      return undefined;
+    })
+    .find((m) => m !== undefined);
+  if (perProp !== undefined) return perProp;
+  const events = relevant.filter((p) => p.owner === "VEVENT");
+  const comps = [...new Set(events.map((p) => p.comp))];
+  return comps
+    .map((c) => {
+      const own = events.filter((p) => p.comp === c);
+      const twice = ONCE.find((n) => own.filter((p) => p.name === n).length > 1);
+      if (twice !== undefined) return `an event has more than one ${twice}`;
+      if (own.some((p) => p.name === "DTEND") && own.some((p) => p.name === "DURATION")) {
+        return "an event has both DTEND and DURATION";
+      }
+      return own.filter((p) => p.name === "RRULE").length > 1
+        ? "an event has more than one RRULE (undefined by RFC 5545 3.8.5.3)"
+        : undefined;
+    })
+    .find((m) => m !== undefined);
+};
+
 // ---- values read from the file ----
 
 /** A date or date-time value as written: wall clock plus how it is anchored. */
@@ -85,7 +400,8 @@ const parseTimeVal = (raw: string, tzid: string | undefined): V<TimeVal> => {
   if (m === null) return fail(`"${raw}" is not a valid date or date-time`);
   const n = (i: number): number => Number(m[i] ?? 0);
   return Result.succeed({
-    wall: { year: n(1), month: n(2), day: n(3), hour: n(4), minute: n(5), second: n(6) },
+    // a leap second (23:59:60Z) is read as the last second of the minute (RFC 5545 3.3.5)
+    wall: { year: n(1), month: n(2), day: n(3), hour: n(4), minute: n(5), second: Math.min(n(6), 59) },
     isDate: m[4] === undefined,
     utc: m[7] === "Z",
     tzid: m[7] === "Z" || m[4] === undefined ? undefined : tzid,
@@ -94,7 +410,6 @@ const parseTimeVal = (raw: string, tzid: string | undefined): V<TimeVal> => {
 
 const timeVals = (prop: ICAL.Property): V<readonly TimeVal[]> => {
   const jcal: unknown[] = prop.jCal;
-  if (jcal[2] === "period") return fail(`${prop.name.toUpperCase()} with PERIOD values is not supported`);
   const tzid = prop.getParameter("tzid");
   return sequence(jcal.slice(3), (raw) =>
     parseTimeVal(String(raw), typeof tzid === "string" ? tzid : undefined),
@@ -152,39 +467,62 @@ interface Ev {
   readonly startMs: number;
   readonly startWall: Wall;
   readonly dur: Dur;
+  /** a date-time without Z and without TZID (always false for an all-day event) */
+  readonly floating: boolean;
 }
 
 const dayNumber = (w: Wall): number => Date.UTC(w.year, w.month - 1, w.day) / DAY_MS;
 
-/** Day number of the date an instant has in a zone. */
-const dayIn = (zone: Zone, ms: number): number => dayNumber(instantToWall(zone, ms));
+const isFloating = (tv: TimeVal): boolean => !tv.isDate && !tv.utc && tv.tzid === undefined;
 
+/** A DURATION value as nominal days plus exact milliseconds (RFC 5545 3.3.6); negative ones are an error. */
+const durOfValue = (raw: string): V<Dur> =>
+  Result.gen(function* () {
+    const d = yield* attempt(() => {
+      const v = ICAL.Duration.fromString(raw);
+      return {
+        seconds: v.toSeconds(),
+        days: v.weeks * 7 + v.days,
+        ms: ((v.hours * 60 + v.minutes) * 60 + v.seconds) * 1000,
+      };
+    }, "the DURATION is not valid");
+    if (!Number.isFinite(d.seconds + d.days + d.ms)) return yield* fail("the DURATION is not valid");
+    if (d.seconds < 0) return yield* fail("the DURATION of an event must not be negative");
+    return { days: d.days, ms: d.ms };
+  });
+
+/**
+ * Length from DURATION or DTEND (RFC 5545 3.6.1, 3.8.2.2, 3.8.2.5). Without both a timed event has
+ * no length and an all-day event lasts one day. DTEND has the type of DTSTART and lies after it.
+ * Tolerated deviation: an all-day DTEND equal to DTSTART is read as one day (some writers emit it).
+ */
 const durationOf = (ctx: Ctx, c: ICAL.Component, start: TimeVal, zone: Zone, startMs: number): V<Dur> =>
   Result.gen(function* () {
     const durProp = c.getFirstProperty("duration");
     if (durProp !== null) {
-      const d = yield* attempt(() => {
-        const v = durProp.getFirstValue() as ICAL.Duration;
-        return {
-          seconds: v.toSeconds(),
-          days: v.weeks * 7 + v.days,
-          ms: ((v.hours * 60 + v.minutes) * 60 + v.seconds) * 1000,
-        };
-      }, "the DURATION is not valid");
-      if (!Number.isFinite(d.seconds + d.days + d.ms)) return yield* fail("the DURATION is not valid");
-      if (d.seconds < 0) return yield* fail("the DURATION of an event must not be negative");
-      return start.isDate ? { days: Math.ceil(d.seconds / 86_400), ms: 0 } : { days: d.days, ms: d.ms };
+      const d = yield* durOfValue(String(durProp.jCal[3]));
+      if (start.isDate && d.ms !== 0) {
+        return yield* fail("the DURATION of an all-day event must be in days or weeks");
+      }
+      return d;
     }
     const endVals = yield* allTimeVals(c, "dtend");
     const end = endVals[0];
-    if (end === undefined) return start.isDate ? { days: 1, ms: 0 } : { days: 0, ms: HOUR_MS };
-    if (start.isDate && end.isDate) {
+    if (end === undefined) return start.isDate ? { days: 1, ms: 0 } : { days: 0, ms: 0 };
+    if (end.isDate !== start.isDate) {
+      return yield* fail("DTEND must have the same type as DTSTART (both DATE or both DATE-TIME)");
+    }
+    if (start.isDate) {
       const days = dayNumber(end.wall) - dayNumber(start.wall);
       if (days < 0) return yield* fail("the event ends before it starts");
-      return { days, ms: 0 };
+      return { days: Math.max(days, 1), ms: 0 };
+    }
+    if (isFloating(end) !== isFloating(start)) {
+      return yield* fail("DTEND is floating exactly when DTSTART is floating");
     }
     const endMs = yield* toInstant(ctx, end, zone);
     if (endMs < startMs) return yield* fail("the event ends before it starts");
+    if (endMs === startMs) return yield* fail("DTEND must be later than DTSTART");
     return { days: 0, ms: endMs - startMs };
   });
 
@@ -202,7 +540,7 @@ const eventOf = (ctx: Ctx, c: ICAL.Component): V<Ev> =>
           : ctx.host;
     const startMs = yield* toInstant(ctx, start, zone);
     const dur = yield* durationOf(ctx, c, start, zone, startMs);
-    return { allDay: start.isDate, zone, startMs, startWall: start.wall, dur };
+    return { allDay: start.isDate, zone, startMs, startWall: start.wall, dur, floating: isFloating(start) };
   });
 
 /** End instant (exclusive) of an occurrence starting at `startMs` (`wall` is its start in the event's zone). */
@@ -287,25 +625,67 @@ const walkRule = (
       ev,
       typeof value === "object" && value !== null ? (value as { until?: unknown }).until : undefined,
     );
-    const it = yield* attempt(() => {
-      const recur = prop.getFirstValue() as ICAL.Recur;
+    const recur = yield* attempt(
+      () => prop.getFirstValue() as ICAL.Recur,
+      "the recurrence rule is not valid",
+    );
+    // COUNT is applied here (it includes DTSTART, which ical.js leaves out when the rule does not hit it)
+    const count = typeof recur.count === "number" && recur.count > 0 ? recur.count : undefined;
+    const parts = recur.parts as Record<string, number[] | string[] | undefined>;
+    const weekNos = parts.BYWEEKNO as number[] | undefined;
+    // BYYEARDAY limits a sub-daily rule (RFC 5545 3.3.10 table); ical.js only knows it for YEARLY
+    const subDaily = ["HOURLY", "MINUTELY", "SECONDLY"].includes(String(recur.freq));
+    const yearDays = subDaily ? (parts.BYYEARDAY as number[] | undefined) : undefined;
+    if (yearDays !== undefined) delete parts.BYYEARDAY;
+    if (weekNos !== undefined && (parts.BYYEARDAY || parts.BYMONTHDAY || parts.BYSETPOS)) {
+      return yield* fail("BYWEEKNO together with BYYEARDAY, BYMONTHDAY or BYSETPOS is not supported");
+    }
+    const source = yield* attempt((): (() => Wall | null) => {
+      if (weekNos !== undefined) return weekNoWalls(recur, ev.startWall, weekNos);
       recur.until = null;
-      return recur.iterator(ICAL.Time.fromData({ ...ev.startWall, isDate: ev.allDay }));
+      recur.count = null;
+      if (ev.allDay) {
+        // RFC 5545 3.3.10: BYHOUR, BYMINUTE and BYSECOND have no meaning for a DATE: ignored
+        for (const key of ["BYHOUR", "BYMINUTE", "BYSECOND"]) delete parts[key];
+      }
+      const it = recur.iterator(ICAL.Time.fromData({ ...ev.startWall, isDate: ev.allDay }));
+      return () => {
+        const next = it.next();
+        if (next === null || next === undefined) return null;
+        return {
+          year: next.year,
+          month: next.month,
+          day: next.day,
+          hour: ev.allDay ? 0 : next.hour,
+          minute: ev.allDay ? 0 : next.minute,
+          second: ev.allDay ? 0 : next.second,
+        };
+      };
     }, "the recurrence rule is not valid");
     const zone = ev.allDay ? ctx.host : ev.zone;
+    const startsAt = wallToUtcMs(ev.startWall);
     const out: number[] = [];
+    let produced = 0;
+    let first = true;
     for (;;) {
-      const next = yield* attempt(() => it.next(), "the recurrence rule cannot be expanded");
-      if (next === null || next === undefined) break;
-      if (++budget.walked > MAX_WALKED) return yield* fail("too many occurrences");
-      const wall: Wall = {
-        year: next.year,
-        month: next.month,
-        day: next.day,
-        hour: ev.allDay ? 0 : next.hour,
-        minute: ev.allDay ? 0 : next.minute,
-        second: ev.allDay ? 0 : next.second,
-      };
+      const wall = yield* attempt(source, "the recurrence rule cannot be expanded");
+      if (wall !== null) {
+        if (++budget.walked > MAX_WALKED) return yield* fail("too many occurrences");
+        if (yearDays !== undefined && !matchesYearDay(wall, yearDays)) continue;
+      }
+      if (first) {
+        first = false;
+        // DTSTART is the first instance even when the rule does not produce it (RFC 5545 3.3.10)
+        if (wall === null || wallToUtcMs(wall) !== startsAt) {
+          produced++;
+          if (ev.startMs >= lowMs && ev.startMs < toMs) {
+            if (++budget.kept > MAX_OCCURRENCES) return yield* fail("too many occurrences");
+            out.push(ev.startMs);
+          }
+        }
+      }
+      if (wall === null || (count !== undefined && produced >= count)) break;
+      produced++;
       // cheap skip before the window (offsets are far below 2 days); the exact check follows
       if (wallToUtcMs(wall) < lowMs - 2 * DAY_MS) continue;
       const ms = wallToInstant(zone, wall);
@@ -318,15 +698,94 @@ const walkRule = (
     return out;
   });
 
+const WEEKDAY_INDEX: Readonly<Record<string, number>> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+
+/** Weekday (0 = Sunday) of a day number (days since 1970-01-01, a Thursday). */
+const weekdayOf = (day: number): number => (((day + 4) % 7) + 7) % 7;
+
+const yearDayOf = (w: Wall): number =>
+  (Date.UTC(w.year, w.month - 1, w.day) - Date.UTC(w.year, 0, 1)) / DAY_MS + 1;
+
+const matchesYearDay = (w: Wall, days: readonly number[]): boolean => {
+  const inYear = daysInYear(w.year);
+  return days.some((d) => (d > 0 ? d : inYear + d + 1) === yearDayOf(w));
+};
+
+const daysInYear = (year: number): number => (Date.UTC(year + 1, 0, 1) - Date.UTC(year, 0, 1)) / DAY_MS;
+
+/**
+ * Walls of a YEARLY rule with BYWEEKNO (ical.js ignores it). Week 1 is the first week, starting on
+ * WKST (default Monday), with at least four days in the year; a negative number counts from the
+ * last week. The days are those of BYDAY (the weekday of DTSTART when absent), limited by BYMONTH,
+ * at the times of BYHOUR/BYMINUTE/BYSECOND (those of DTSTART when absent). Dates before DTSTART
+ * are not instances.
+ */
+const weekNoWalls = (recur: ICAL.Recur, start: Wall, weekNos: readonly number[]): (() => Wall | null) => {
+  const parts = recur.parts as Record<string, (number | string)[] | undefined>;
+  const wkst = typeof recur.wkst === "number" ? recur.wkst - 1 : 1;
+  const interval = recur.interval > 0 ? recur.interval : 1;
+  const startDay = dayNumber(start);
+  const weekdays = new Set(
+    (parts.BYDAY ?? [])
+      .map((d) => WEEKDAY_INDEX[String(d).slice(-2)] ?? 0)
+      .concat(parts.BYDAY === undefined ? [weekdayOf(startDay)] : []),
+  );
+  const months = new Set((parts.BYMONTH ?? []).map(Number));
+  const list = (key: string, own: number): number[] =>
+    [...new Set((parts[key] ?? [own]).map(Number))].sort((a, b) => a - b);
+  const times = list("BYHOUR", start.hour).flatMap((hour) =>
+    list("BYMINUTE", start.minute).flatMap((minute) =>
+      list("BYSECOND", start.second).map((second) => ({ hour, minute, second })),
+    ),
+  );
+  const firstWeekStart = (year: number): number => {
+    const jan4 = Date.UTC(year, 0, 4) / DAY_MS;
+    return jan4 - ((weekdayOf(jan4) - wkst + 7) % 7);
+  };
+  const startMs = wallToUtcMs(start);
+  const yearWalls = (year: number): Wall[] => {
+    const base = firstWeekStart(year);
+    const weeks = (firstWeekStart(year + 1) - base) / 7;
+    const days = weekNos
+      .map((n) => (n > 0 ? n : weeks + n + 1))
+      .filter((k) => k >= 1 && k <= weeks)
+      .flatMap((k) => [0, 1, 2, 3, 4, 5, 6].map((d) => base + (k - 1) * 7 + d))
+      .filter(
+        (d) =>
+          weekdays.has(weekdayOf(d)) && (months.size === 0 || months.has(wallFromUtcMs(d * DAY_MS).month)),
+      );
+    return [...new Set(days)]
+      .flatMap((d) => times.map((t) => ({ ...wallFromUtcMs(d * DAY_MS), ...t })))
+      .filter((w) => wallToUtcMs(w) >= startMs)
+      .sort((a, b) => wallToUtcMs(a) - wallToUtcMs(b));
+  };
+  let year = start.year;
+  let emptyYears = 0;
+  let queue: Wall[] = [];
+  return () => {
+    while (queue.length === 0) {
+      // a rule that never matches (say week 53 of years without one) ends instead of looping
+      if (year > 9999 || emptyYears > 100) return null;
+      queue = yearWalls(year);
+      emptyYears = queue.length === 0 ? emptyYears + 1 : 0;
+      year += interval;
+    }
+    return queue.shift() ?? null;
+  };
+};
+
 interface Override {
-  /** the instant of the instance it replaces (for a date-valued RECURRENCE-ID: the first match, once resolved) */
+  /** the instant of the instance it replaces */
   readonly ridMs: number;
-  /** set when RECURRENCE-ID is a date on a timed series: it names every instance of that date in the series' zone */
-  readonly ridDay: number | undefined;
   readonly thisAndFuture: boolean;
   readonly ev: Ev;
 }
 
+/**
+ * An exception (RFC 5545 3.8.4.4). Its RECURRENCE-ID has the type of the DTSTART of the series
+ * (DATE or DATE-TIME) and is floating exactly when that is. RANGE=THISANDPRIOR is deprecated and
+ * never written: reading it is reported as unsupported.
+ */
 const overrideOf = (ctx: Ctx, main: Ev, c: ICAL.Component): V<Override> =>
   Result.gen(function* () {
     const prop = c.getFirstProperty("recurrence-id");
@@ -335,19 +794,19 @@ const overrideOf = (ctx: Ctx, main: Ev, c: ICAL.Component): V<Override> =>
     if (prop === null || rid === undefined) return yield* fail("an exception has no RECURRENCE-ID");
     const range = String(prop.getParameter("range") ?? "").toUpperCase();
     if (range === "THISANDPRIOR") return yield* fail("RANGE=THISANDPRIOR is not supported");
-    const ridDay = rid.isDate && !main.allDay ? dayNumber(rid.wall) : undefined;
-    const ridMs =
-      ridDay === undefined ? yield* toInstant(ctx, rid, main.zone) : wallToInstant(main.zone, rid.wall);
+    if (range !== "" && range !== "THISANDFUTURE") return yield* fail(`RANGE=${range} is not valid`);
+    if (rid.isDate !== main.allDay) {
+      return yield* fail(
+        "RECURRENCE-ID must have the same type as the DTSTART of the series (DATE or DATE-TIME)",
+      );
+    }
+    if (isFloating(rid) !== main.floating) {
+      return yield* fail("RECURRENCE-ID is floating exactly when the DTSTART of the series is floating");
+    }
+    const ridMs = yield* toInstant(ctx, rid, main.zone);
     const ev = yield* eventOf(ctx, c);
-    return { ridMs, ridDay, thisAndFuture: range === "THISANDFUTURE", ev };
+    return { ridMs, thisAndFuture: range === "THISANDFUTURE", ev };
   });
-
-/** An override with a date-valued RECURRENCE-ID takes the instant of the first instance of that date. */
-const resolveRid = (main: Ev, base: readonly Item[], o: Override): Override => {
-  if (o.ridDay === undefined) return o;
-  const hit = base.find((i) => dayIn(main.zone, i.orig) === o.ridDay);
-  return hit === undefined ? o : { ...o, ridMs: hit.orig };
-};
 
 /**
  * How far a THISANDFUTURE override moved its own instance: the difference of its new start and
@@ -372,28 +831,56 @@ const mainItems = (ctx: Ctx, c: ICAL.Component, ev: Ev, lowMs: number, toMs: num
       rules.length === 0
         ? [ev.startMs]
         : (yield* sequence(rules, (r) => walkRule(ctx, ev, r, lowMs, toMs, budget))).flat();
-    const rdates = yield* allTimeVals(c, "rdate");
-    const added = yield* sequence(rdates, (tv) => toInstant(ctx, tv, ev.zone));
+    const added = yield* rdatesOf(ctx, c, ev);
     const exdates = yield* allTimeVals(c, "exdate");
-    // a date-valued EXDATE on a timed series removes the instances of that date in the series' zone
-    const excludedDays = new Set(
-      exdates.filter((tv) => tv.isDate && !ev.allDay).map((tv) => dayNumber(tv.wall)),
-    );
-    const excluded = new Set(
-      yield* sequence(
-        exdates.filter((tv) => !(tv.isDate && !ev.allDay)),
-        (tv) => toInstant(ctx, tv, ev.zone),
-      ),
-    );
-    return [...new Set([...ruled, ...added])]
-      .filter(
-        (ms) =>
-          ms < toMs &&
-          !excluded.has(ms) &&
-          (excludedDays.size === 0 || !excludedDays.has(dayIn(ev.zone, ms))),
-      )
+    // the values of RDATE and EXDATE have the type of DTSTART (a policy: a mismatch would match nothing)
+    if (exdates.some((tv) => tv.isDate !== ev.allDay)) {
+      return yield* fail("EXDATE must have the same type as DTSTART (both DATE or both DATE-TIME)");
+    }
+    const excluded = new Set(yield* sequence(exdates, (tv) => toInstant(ctx, tv, ev.zone)));
+    // set = (DTSTART + RRULE + RDATE) minus EXDATE: an EXDATE beats an RDATE, equal instants count once
+    const periods = new Map(added.flatMap((a) => (a.dur === undefined ? [] : [[a.ms, a.dur] as const])));
+    return [...new Set([...ruled, ...added.map((a) => a.ms)])]
+      .filter((ms) => ms < toMs && !excluded.has(ms))
       .sort((a, b) => a - b)
-      .map((ms) => ({ orig: ms, start: ms, dur: ev.dur }));
+      .map((ms) => ({ orig: ms, start: ms, dur: periods.get(ms) ?? ev.dur }));
+  });
+
+/** RDATE values: instants, and for a PERIOD its own length (which replaces the one of the event). */
+const rdatesOf = (
+  ctx: Ctx,
+  c: ICAL.Component,
+  ev: Ev,
+): V<readonly { readonly ms: number; readonly dur: Dur | undefined }[]> =>
+  Result.gen(function* () {
+    const out: { ms: number; dur: Dur | undefined }[] = [];
+    for (const prop of c.getAllProperties("rdate")) {
+      const jcal: unknown[] = prop.jCal;
+      const tzid = prop.getParameter("tzid");
+      const tz = typeof tzid === "string" ? tzid : undefined;
+      for (const raw of jcal.slice(3)) {
+        if (jcal[2] === "period") {
+          const [from, to] = Array.isArray(raw) ? raw.map(String) : [];
+          if (from === undefined || to === undefined) return yield* fail("an RDATE PERIOD is not valid");
+          if (ev.allDay) return yield* fail("an RDATE PERIOD cannot be used in an all-day event");
+          const start = yield* parseTimeVal(from, tz);
+          const startMs = yield* toInstant(ctx, start, ev.zone);
+          if (/^[+-]?P/.test(to)) {
+            out.push({ ms: startMs, dur: yield* durOfValue(to) });
+          } else {
+            const end = yield* parseTimeVal(to, tz);
+            out.push({ ms: startMs, dur: { days: 0, ms: (yield* toInstant(ctx, end, ev.zone)) - startMs } });
+          }
+        } else {
+          const tv = yield* parseTimeVal(String(raw), tz);
+          if (tv.isDate !== ev.allDay) {
+            return yield* fail("RDATE must have the same type as DTSTART (both DATE or both DATE-TIME)");
+          }
+          out.push({ ms: yield* toInstant(ctx, tv, ev.zone), dur: undefined });
+        }
+      }
+    }
+    return out;
   });
 
 /** Every instance of the event that starts before `toMs` and can reach into `[fromMs, toMs)`, sorted by start. */
@@ -404,6 +891,8 @@ const expandAll = (
   toMs: number,
 ): V<readonly Instance[]> =>
   Result.gen(function* () {
+    const problem = rawProblem(lines);
+    if (problem !== undefined) return yield* fail(problem);
     const calendar = yield* attempt(
       () => new ICAL.Component(ICAL.parse(lines.join("\r\n"))),
       "the file is not valid iCalendar data",
@@ -423,18 +912,13 @@ const expandAll = (
       Math.max(0, ...raw.filter((o) => o.thisAndFuture).map((o) => Math.abs(futureShift(o)))) +
       2 * DAY_MS;
     const base = yield* mainItems(ctx, main, ev, fromMs - slack, toMs);
-    const overrides = raw.map((o) => resolveRid(ev, base, o));
+    const overrides = raw;
     const shifted = overrides
       .filter((o) => o.thisAndFuture)
       .sort((a, b) => a.ridMs - b.ridMs)
       .reduce((items, o) => items.map((i) => (i.orig >= o.ridMs ? applyFuture(ev, o, i) : i)), base);
-    const replacedInstants = new Set(overrides.filter((o) => o.ridDay === undefined).map((o) => o.ridMs));
-    const replacedDays = new Set(overrides.flatMap((o) => (o.ridDay === undefined ? [] : [o.ridDay])));
-    const kept = shifted.filter(
-      (i) =>
-        !replacedInstants.has(i.orig) &&
-        (replacedDays.size === 0 || !replacedDays.has(dayIn(ev.zone, i.orig))),
-    );
+    const replacedInstants = new Set(overrides.map((o) => o.ridMs));
+    const kept = shifted.filter((i) => !replacedInstants.has(i.orig));
     const fromRule = kept.map((i) => build(ctx, ev, i.start, i.dur));
     const fromOverrides = overrides.map((o) => build(ctx, o.ev, o.ev.startMs, o.ev.dur));
     return [...fromRule, ...fromOverrides]

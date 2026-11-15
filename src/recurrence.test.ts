@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseEventTimes } from "./range.js";
-import { buildIcs, type IcsEventParams } from "./recurrence.js";
-import { failure, unwrap } from "./testlib.js";
+import { buildIcs, type IcsEventParams, RecurrenceSpec } from "./recurrence.js";
+import { failure, unfold, unwrap } from "./testlib.js";
 
 /** A timed event on `date` from `start` to `end` (HH:MM) in `zone`. */
 const at = (date: string, start = "10:00", end = "11:00", zone = "UTC") =>
@@ -289,6 +289,89 @@ describe("invites", () => {
         l.endsWith(`mailto:${ok}`),
       ),
     ).toBe(true);
+  });
+});
+
+describe("uid and DTSTAMP", () => {
+  const withUid = (uid: string) => buildIcs(base, uid, "20261102T100000Z");
+
+  it.each(["", "@x", "-x", ".x", "a b", "a;b", "a,b", "a/b", "../x", "a..b", "a\r\nX:y", "a\u0085b", "ä"])(
+    "rejects the uid %j",
+    (uid) => {
+      expect(failure(withUid(uid))._tag).toBe("InvalidInput");
+    },
+  );
+
+  it("accepts a uid of 254 characters and rejects one of 255", () => {
+    expect(unfold(unwrap(withUid("a".repeat(254))))).toContain(`UID:${"a".repeat(254)}`);
+    expect(failure(withUid("a".repeat(255)))._tag).toBe("InvalidInput");
+  });
+
+  it.each(["20261102T100000", "2026-11-02T10:00:00Z", "20261102T100000z", "20261102", ""])(
+    "rejects the DTSTAMP %j",
+    (stamp) => {
+      expect(failure(buildIcs(base, "uid-1", stamp))._tag).toBe("InvalidInput");
+    },
+  );
+});
+
+describe("addresses are URIs", () => {
+  it.each(['a"b@x.com', "a\\b@x.com", "a^b@x.com", "a`b@x.com", "a{b}@x.com", "a|b@x.com", "a%b@x.com"])(
+    "rejects the attendee %j",
+    (a) => {
+      expect(failure(build({ organizer: "me@x.com", attendees: [a] }))._tag).toBe("InvalidInput");
+    },
+  );
+
+  it.each(["a?subject=x@x.com", "a#b@x.com"])("rejects the organizer %j", (o) => {
+    expect(failure(build({ organizer: o, attendees: ["a@x.com"] }))._tag).toBe("InvalidInput");
+  });
+
+  it("accepts plus tags and keeps the case of the address", () => {
+    const ics = lines(unwrap(build({ organizer: "Me+tag@X.com", attendees: ["a.b-c_d@x.com"] })));
+    expect(ics).toContain("ORGANIZER:mailto:Me+tag@X.com");
+  });
+});
+
+describe("the input schema has no room for forbidden rule parts", () => {
+  const parse = (v: unknown) => RecurrenceSpec.safeParse(v).success;
+
+  it("accepts the five shapes", () => {
+    expect(parse({ pattern: { kind: "daily" } })).toBe(true);
+    expect(
+      parse({ pattern: { kind: "weekly", weekdays: ["monday"] }, ending: { kind: "count", count: 2 } }),
+    ).toBe(true);
+    expect(
+      parse({ pattern: { kind: "monthly_day", day: 31 }, ending: { kind: "until", date: "2030-01-01" } }),
+    ).toBe(true);
+    expect(
+      parse({ pattern: { kind: "monthly_weekday", nth: -1, weekday: "friday" }, ending: { kind: "never" } }),
+    ).toBe(true);
+    expect(parse({ pattern: { kind: "yearly", interval: 2 } })).toBe(true);
+  });
+
+  it("rejects rule parts that do not exist, instead of dropping them", () => {
+    expect(parse({ pattern: { kind: "weekly", weekdays: ["monday"], bymonthday: 1 } })).toBe(false);
+    expect(parse({ pattern: { kind: "daily", byyearday: 1 } })).toBe(false);
+    expect(parse({ pattern: { kind: "monthly_weekday", nth: 1, weekday: "monday", bysetpos: 1 } })).toBe(
+      false,
+    );
+    expect(
+      parse({ pattern: { kind: "daily" }, ending: { kind: "count", count: 3, date: "2030-01-01" } }),
+    ).toBe(false);
+    expect(
+      parse({ pattern: { kind: "daily" }, ending: { kind: "until", date: "2030-01-01", count: 3 } }),
+    ).toBe(false);
+    expect(parse({ pattern: { kind: "daily" }, byhour: 9 })).toBe(false);
+  });
+
+  it("rejects values outside the ranges", () => {
+    expect(parse({ pattern: { kind: "monthly_weekday", nth: 5, weekday: "monday" } })).toBe(false);
+    expect(parse({ pattern: { kind: "monthly_day", day: 32 } })).toBe(false);
+    expect(parse({ pattern: { kind: "daily", interval: 0 } })).toBe(false);
+    expect(parse({ pattern: { kind: "weekly", weekdays: [] } })).toBe(false);
+    expect(parse({ pattern: { kind: "daily" }, ending: { kind: "count", count: 1001 } })).toBe(false);
+    expect(parse({ pattern: { kind: "hourly" } })).toBe(false);
   });
 });
 

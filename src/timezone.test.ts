@@ -143,19 +143,17 @@ describe("zoneFromVtimezone", () => {
     expect(zone.offsetMinutes(Date.parse("2026-06-01T00:00:00Z"))).toBe(-150);
   });
 
-  it("falls back to a generic id without TZID", () => {
-    const zone = ok(
-      zoneFromVtimezone(
-        vtimezone(
-          "BEGIN:STANDARD",
-          "DTSTART:19700101T000000",
-          "TZOFFSETFROM:+0000",
-          "TZOFFSETTO:+0100",
-          "END:STANDARD",
-        ),
+  it("rejects a VTIMEZONE without TZID", () => {
+    const r = zoneFromVtimezone(
+      vtimezone(
+        "BEGIN:STANDARD",
+        "DTSTART:19700101T000000",
+        "TZOFFSETFROM:+0000",
+        "TZOFFSETTO:+0100",
+        "END:STANDARD",
       ),
     );
-    expect(zone.id).toBe("VTIMEZONE");
+    expect(Result.isFailure(r) && r.failure.message).toMatch(/no TZID/);
   });
 
   it("rejects a VTIMEZONE without rules, offsets or DTSTART", () => {
@@ -199,10 +197,11 @@ describe("resolveZone", () => {
     expect(zone.offsetMinutes(Date.parse("2026-01-01T00:00:00Z"))).toBe(180);
   });
 
-  it("uses IANA without a VTIMEZONE, and when the VTIMEZONE is unusable", () => {
+  it("uses IANA without a VTIMEZONE, and reports an unusable VTIMEZONE instead of guessing", () => {
     expect(ok(resolveZone("America/New_York", [])).id).toBe("America/New_York");
     const broken = vtimezone("TZID:Europe/Berlin");
-    expect(ok(resolveZone("Europe/Berlin", [broken])).id).toBe("Europe/Berlin");
+    const r = resolveZone("Europe/Berlin", [broken]);
+    expect(Result.isFailure(r) && r.failure.message).toMatch(/no rules/);
   });
 
   it("maps Windows names", () => {

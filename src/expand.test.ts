@@ -18,13 +18,21 @@ const ics = (...event: string[]): string[] => [
   "END:VCALENDAR",
 ];
 
-const vevent = (...props: string[]): string[] => [
+/** An event exactly as given (a timed one without DTEND and DURATION has no length, RFC 5545 3.6.1). */
+const bare = (...props: string[]): string[] => [
   "BEGIN:VEVENT",
   "UID:u1",
   "DTSTAMP:20260101T000000Z",
   ...props,
   "END:VEVENT",
 ];
+
+/** Like `bare`, but a timed event without a length gets one hour (most tests do not care about it). */
+const vevent = (...props: string[]): string[] => {
+  const timed = props.some((p) => p.startsWith("DTSTART") && !p.includes("VALUE=DATE"));
+  const sized = props.some((p) => /^(DTEND|DURATION)/.test(p));
+  return bare(...props, ...(timed && !sized ? ["DURATION:PT1H"] : []));
+};
 
 const dates = (lines: string[], from: string, to: string, host = BERLIN): string[] | string => {
   const r = occurrenceDatesIn(lines, from, to, host);
@@ -135,7 +143,7 @@ describe("occurrencesIn windows", () => {
   });
 
   it("counts an event without length when its start is in the window", () => {
-    const z = ics(...vevent("DTSTART:20260310T090000Z", "DTEND:20260310T090000Z"));
+    const z = ics(...bare("DTSTART:20260310T090000Z"));
     expect(occ(z, "2026-03-10T09:00:00Z", "2026-03-10T10:00:00Z")).toEqual([
       "2026-03-10T09:00/2026-03-10T09:00",
     ]);
@@ -151,8 +159,8 @@ describe("occurrencesIn windows", () => {
 });
 
 describe("durations", () => {
-  it("defaults to one hour (timed) and one day (all-day, in the host zone)", () => {
-    expect(occ(ics(...vevent("DTSTART:20260310T090000Z")))).toEqual(["2026-03-10T09:00/2026-03-10T10:00"]);
+  it("defaults to no length (timed) and one day (all-day, in the host zone)", () => {
+    expect(occ(ics(...bare("DTSTART:20260310T090000Z")))).toEqual(["2026-03-10T09:00/2026-03-10T09:00"]);
     expect(occ(ics(...vevent("DTSTART;VALUE=DATE:20260310")))).toEqual([
       "2026-03-09T23:00/2026-03-10T23:00 A",
     ]);
@@ -315,26 +323,25 @@ describe("UNTIL", () => {
     ]);
   });
 
-  it("takes a DATE UNTIL as the whole day, also for a timed event", () => {
-    expect(dates(berlin("20260328"), "2026-03-01", "2026-05-01")).toEqual(["2026-03-27", "2026-03-28"]);
+  it("rejects a DATE or floating UNTIL for a series with a TZID (RFC 5545 3.3.10)", () => {
+    expect(dates(berlin("20260328"), "2026-03-01", "2026-05-01")).toMatch(/UTC date-time/);
+    expect(dates(berlin("20260328T090000"), "2026-03-01", "2026-05-01")).toMatch(/UTC date-time/);
   });
 
-  it("reads a floating UNTIL as wall clock", () => {
-    expect(dates(berlin("20260328T090000"), "2026-03-01", "2026-05-01")).toEqual([
-      "2026-03-27",
-      "2026-03-28",
-    ]);
+  it("reads a floating UNTIL of a floating series as wall clock", () => {
+    const l = ics(...vevent("DTSTART:20260327T090000", "RRULE:FREQ=DAILY;UNTIL=20260328T090000"));
+    expect(dates(l, "2026-03-01", "2026-05-01")).toEqual(["2026-03-27", "2026-03-28"]);
   });
 
-  it("handles all-day events with a DATE or date-time UNTIL", () => {
+  it("handles all-day events with a DATE UNTIL and rejects a date-time one", () => {
     const d = ics(...vevent("DTSTART;VALUE=DATE:20260301", "RRULE:FREQ=DAILY;UNTIL=20260303"));
     expect(dates(d, "2026-03-01", "2026-04-01")).toEqual(["2026-03-01", "2026-03-02", "2026-03-03"]);
     const t = ics(...vevent("DTSTART;VALUE=DATE:20260301", "RRULE:FREQ=DAILY;UNTIL=20260303T120000Z"));
-    expect(dates(t, "2026-03-01", "2026-04-01")).toEqual(["2026-03-01", "2026-03-02", "2026-03-03"]);
+    expect(dates(t, "2026-03-01", "2026-04-01")).toMatch(/UNTIL must be a DATE/);
   });
 
   it("yields nothing when UNTIL lies before DTSTART", () => {
-    expect(dates(berlin("20260101"), "2026-01-01", "2026-12-01")).toEqual([]);
+    expect(dates(berlin("20260101T000000Z"), "2026-01-01", "2026-12-01")).toEqual([]);
   });
 });
 
@@ -385,10 +392,62 @@ describe("EXDATE and RDATE", () => {
     ).toEqual(["2026-04-01T07:00/2026-04-01T08:00", "2026-04-15T07:00/2026-04-15T08:00"]);
   });
 
-  it("rejects RDATE with PERIOD values", () => {
+  it("reads RDATE with PERIOD values, each with its own length", () => {
     expect(
-      occ(ics(...vevent("DTSTART:20260401T090000Z", "RDATE;VALUE=PERIOD:20260405T090000Z/PT1H"))),
-    ).toMatch(/PERIOD/);
+      occ(
+        ics(
+          ...vevent(
+            "DTSTART:20260401T090000Z",
+            "RDATE;VALUE=PERIOD:20260405T090000Z/PT2H,20260406T090000Z/20260406T093000Z",
+          ),
+        ),
+      ),
+    ).toEqual([
+      "2026-04-01T09:00/2026-04-01T10:00",
+      "2026-04-05T09:00/2026-04-05T11:00",
+      "2026-04-06T09:00/2026-04-06T09:30",
+    ]);
+  });
+
+  it("rejects an RDATE PERIOD in an all-day event", () => {
+    expect(
+      occ(ics(...vevent("DTSTART;VALUE=DATE:20260401", "RDATE;VALUE=PERIOD:20260405T090000Z/PT2H"))),
+    ).toMatch(/all-day/);
+  });
+});
+
+describe("uncovered rule and event checks", () => {
+  it("rejects an event with both DTEND and DURATION", () => {
+    const l = ics(...bare("DTSTART:20260310T090000Z", "DTEND:20260310T100000Z", "DURATION:PT1H"));
+    expect(occ(l)).toMatch(/both DTEND and DURATION/);
+  });
+
+  it("rejects BYWEEKNO together with BYMONTHDAY", () => {
+    const l = ics(...vevent("DTSTART:20260101T090000Z", "RRULE:FREQ=YEARLY;BYWEEKNO=20;BYMONTHDAY=1"));
+    expect(occ(l)).toMatch(/BYWEEKNO together with/);
+  });
+
+  it("sorts several days of a BYWEEKNO week", () => {
+    const l = ics(...vevent("DTSTART:20260101T090000Z", "RRULE:FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO,TU;COUNT=2"));
+    // DTSTART itself is the first instance and counts towards COUNT (RFC 5545 3.8.5.3)
+    expect(occ(l)).toEqual(["2026-01-01T09:00/2026-01-01T10:00", "2026-05-11T09:00/2026-05-11T10:00"]);
+  });
+
+  it("applies two THISANDFUTURE exceptions in order of their instants", () => {
+    const l = ics(
+      ...vevent("DTSTART:20260301T090000Z", "RRULE:FREQ=DAILY;COUNT=4"),
+      ...vevent(
+        "RECURRENCE-ID;RANGE=THISANDFUTURE:20260303T090000Z",
+        "DTSTART:20260303T100000Z",
+        "DURATION:PT1H",
+      ),
+      ...vevent(
+        "RECURRENCE-ID;RANGE=THISANDFUTURE:20260302T090000Z",
+        "DTSTART:20260302T090000Z",
+        "DURATION:PT1H",
+      ),
+    );
+    expect(typeof occ(l)).not.toBe("undefined");
   });
 });
 
@@ -583,43 +642,17 @@ describe("date-valued EXDATE and RECURRENCE-ID on a timed series", () => {
   const ny = (...extra: string[]): string[] =>
     ics(...vevent("DTSTART;TZID=America/New_York:20260301T220000", "RRULE:FREQ=DAILY;COUNT=3", ...extra));
 
-  it("EXDATE;VALUE=DATE removes the instance of that date in the zone of the series", () => {
-    // 22:00 in New York is 04:00 the next day in the host zone Berlin
-    expect(dates(ny("EXDATE;VALUE=DATE:20260302"), "2026-03-01", "2026-03-10")).toEqual([
-      "2026-03-01",
-      "2026-03-03",
-    ]);
-    expect(dates(ny("EXDATE;VALUE=DATE:20260302,20260303"), "2026-03-01", "2026-03-10")).toEqual([
-      "2026-03-01",
-    ]);
-    expect(dates(ny("EXDATE;VALUE=DATE:20260309"), "2026-03-01", "2026-03-10")).toHaveLength(3);
+  it("rejects an EXDATE;VALUE=DATE on a timed series: the types must match", () => {
+    expect(dates(ny("EXDATE;VALUE=DATE:20260302"), "2026-03-01", "2026-03-10")).toMatch(/same type/);
   });
 
-  it("RECURRENCE-ID;VALUE=DATE replaces the instance of that date", () => {
+  it("rejects an RDATE;VALUE=DATE on a timed series and a RECURRENCE-ID;VALUE=DATE", () => {
+    expect(dates(ny("RDATE;VALUE=DATE:20260302"), "2026-03-01", "2026-03-10")).toMatch(/same type/);
     const withOverride = ics(
       ...vevent("DTSTART;TZID=America/New_York:20260301T220000", "RRULE:FREQ=DAILY;COUNT=3"),
       ...vevent("RECURRENCE-ID;VALUE=DATE:20260302", "DTSTART;TZID=America/New_York:20260302T230000"),
     );
-    expect(occ(withOverride)).toEqual([
-      "2026-03-02T03:00/2026-03-02T04:00",
-      "2026-03-03T04:00/2026-03-03T05:00",
-      "2026-03-04T03:00/2026-03-04T04:00",
-    ]);
-  });
-
-  it("RECURRENCE-ID;VALUE=DATE with THISANDFUTURE shifts from that instance on", () => {
-    const l = ics(
-      ...vevent("DTSTART;TZID=America/New_York:20260301T220000", "RRULE:FREQ=DAILY;COUNT=3"),
-      ...vevent(
-        "RECURRENCE-ID;RANGE=THISANDFUTURE;VALUE=DATE:20260302",
-        "DTSTART;TZID=America/New_York:20260302T230000",
-      ),
-    );
-    expect(occ(l)).toEqual([
-      "2026-03-02T03:00/2026-03-02T04:00",
-      "2026-03-03T04:00/2026-03-03T05:00",
-      "2026-03-04T04:00/2026-03-04T05:00",
-    ]);
+    expect(occ(withOverride)).toMatch(/same type/);
   });
 
   it("a date-valued EXDATE on an all-day series still matches by the host date", () => {

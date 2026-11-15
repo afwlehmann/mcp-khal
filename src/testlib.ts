@@ -2,7 +2,21 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Result } from "effect";
+import { it } from "vitest";
 import type { Settings } from "./settings.js";
+
+/**
+ * A test that proves requirements of the specs (ids of spec/*.json, e.g. `RFC5545:3.3.10:count-xor-until`).
+ * The ids are part of the test name, so a failure says which rule broke, and
+ * `src/conformance.meta.test.ts` checks that every required requirement is cited somewhere.
+ */
+export const itReq = (
+  ids: string | readonly string[],
+  name: string,
+  fn: () => void | Promise<void>,
+): void => {
+  it(`[${[ids].flat().join(" ")}] ${name}`, fn);
+};
 
 /** Test helpers; excluded from the production build. */
 export const unwrap = <A, E>(r: Result.Result<A, E>): A =>

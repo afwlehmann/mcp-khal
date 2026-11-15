@@ -1,11 +1,16 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect } from "effect";
-import { events, prop, unfoldLines } from "./ics.js";
-import { MAX_FILE_BYTES } from "./vdir.js";
+import { Effect, Result } from "effect";
+import { calendarWarnings, classifyFile, decodeIcs } from "./ics.js";
+import { isEventFile, MAX_FILE_BYTES, readIcsFile } from "./vdir.js";
 
 // Reads every .ics file of a calendar's vdir. Nothing is dropped silently: a file that cannot be
-// used is reported as a problem next to the events that could be read. Never fails.
+// used is reported as a problem next to the events that could be read, a file that is read but
+// deviates from RFC 5545 (e.g. no PRODID) as a warning. Never fails.
+//
+// Tolerated deviations when reading (see `decodeIcs`): UTF-8 BOM, LF or lone CR line endings, tab
+// folds. A METHOD property is ignored (stored files never carry one, but an invitation saved from
+// an e-mail may). Everything else non-standard is reported, never guessed.
 
 export interface RawEvent {
   /** absolute path of the .ics file */
@@ -19,6 +24,8 @@ export interface CalendarRead {
   readonly events: readonly RawEvent[];
   /** sorted; one message per unusable file (or directory) */
   readonly problems: readonly string[];
+  /** sorted; one message per deviation from RFC 5545 in a file that was read anyway */
+  readonly warnings: readonly string[];
 }
 
 type FileRead =
@@ -32,38 +39,36 @@ const reason = (u: unknown): string => (u instanceof Error ? u.message : String(
 
 const readFileOf = (file: string): Effect.Effect<FileRead> =>
   Effect.tryPromise({
-    try: async (): Promise<FileRead> => {
-      const info = await stat(file);
-      if (!info.isFile()) return { kind: "ignored" };
-      if (info.size > MAX_FILE_BYTES)
-        return { kind: "problem", message: `${file}: skipped, larger than ${MAX_FILE_BYTES} bytes` };
-      return { kind: "ok", file, lines: unfoldLines(await readFile(file, "utf8")) };
-    },
+    try: () => readIcsFile(file),
     catch: (u) => u,
   }).pipe(
     Effect.match({
       onFailure: (u): FileRead => ({ kind: "problem", message: `${file}: unreadable (${reason(u)})` }),
-      onSuccess: (r) => r,
+      onSuccess: (r): FileRead => {
+        if (r.kind === "ignored") return r;
+        if (r.kind === "toobig")
+          return { kind: "problem", message: `${file}: skipped, larger than ${MAX_FILE_BYTES} bytes` };
+        return Result.match(decodeIcs(r.bytes), {
+          onFailure: (e): FileRead => ({ kind: "problem", message: `${file}: ${e.message}, skipped` }),
+          onSuccess: (lines): FileRead => ({ kind: "ok", file, lines }),
+        });
+      },
     }),
   );
 
-/** UIDs of the VEVENTs of one file, without duplicates; `undefined` for an event without UID. */
-const uidsOf = (lines: readonly string[]): readonly (string | undefined)[] => [
-  ...new Set(events(lines).map((e) => prop(e, "UID")?.value.trim() || undefined)),
-];
-
 type Classified =
-  | { readonly event: RawEvent; readonly message?: undefined }
-  | { readonly event?: undefined; readonly message: string };
+  | { readonly event: RawEvent; readonly warnings: readonly string[]; readonly message?: undefined }
+  | { readonly event?: undefined; readonly warnings: readonly string[]; readonly message: string };
 
+/** A file is one event (series), or unusable with the reason (RFC 4791 4.1, vdir: one UID, one component type). */
 const classify = (file: string, lines: readonly string[]): Classified => {
-  const uids = uidsOf(lines);
-  if (uids.length > 1)
-    return {
-      message: `${file}: several UIDs in one file (${uids.map((u) => u ?? "<none>").join(", ")}), skipped`,
-    };
-  const [uid] = uids;
-  return uid === undefined ? { message: `${file}: no event with a UID` } : { event: { file, lines, uid } };
+  const cls = classifyFile(lines);
+  return cls.kind === "unusable"
+    ? { message: `${file}: ${cls.reason}`, warnings: [] }
+    : {
+        event: { file, lines, uid: cls.uid },
+        warnings: calendarWarnings(lines).map((w) => `${file}: ${w}`),
+      };
 };
 
 /**
@@ -83,7 +88,7 @@ export const readCalendar = (dir: string): Effect.Effect<CalendarRead> =>
     Effect.flatMap(({ names, listing }) =>
       Effect.forEach(
         names
-          .filter((n) => n.toLowerCase().endsWith(".ics") && !n.startsWith("."))
+          .filter(isEventFile) // not `*.tmp`, not hidden, not vdir metadata files without extension
           .map((n) => join(dir, n))
           .sort(compare),
         readFileOf,
@@ -92,14 +97,23 @@ export const readCalendar = (dir: string): Effect.Effect<CalendarRead> =>
     ),
     Effect.map(({ reads, listing }): CalendarRead => {
       const classified = reads.flatMap((r): Classified[] =>
-        r.kind === "ok" ? [classify(r.file, r.lines)] : r.kind === "problem" ? [{ message: r.message }] : [],
+        r.kind === "ok"
+          ? [classify(r.file, r.lines)]
+          : r.kind === "problem"
+            ? [{ message: r.message, warnings: [] }]
+            : [],
       );
       const seen = new Map<string, string>();
       const kept = classified.flatMap((c): Classified[] => {
         if (c.event === undefined) return [c];
         const first = seen.get(c.event.uid);
         if (first !== undefined)
-          return [{ message: `${c.event.file}: duplicate UID '${c.event.uid}' (also in ${first}), skipped` }];
+          return [
+            {
+              message: `${c.event.file}: duplicate UID '${c.event.uid}' (also in ${first}), skipped`,
+              warnings: [],
+            },
+          ];
         seen.set(c.event.uid, c.event.file);
         return [c];
       });
@@ -108,6 +122,7 @@ export const readCalendar = (dir: string): Effect.Effect<CalendarRead> =>
         problems: [...listing, ...kept.flatMap((c) => (c.message === undefined ? [] : [c.message]))].sort(
           compare,
         ),
+        warnings: kept.flatMap((c) => c.warnings).sort(compare),
       };
     }),
   );

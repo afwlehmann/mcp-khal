@@ -1,12 +1,13 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { updateEvent, updateLines } from "./editEvent.js";
+import { type EditEnv, organizerNote, type UpdateParams, updateEvent, updateLines } from "./editEvent.js";
 import { events, prop, unfoldLines } from "./ics.js";
 import { failure, removeDir, runFail, runOk, tempDir, testSettings, unwrap } from "./testlib.js";
 import { findEvent, vdirOf } from "./vdir.js";
 
 const NOW = new Date("2030-01-01T10:00:00Z");
+const ENV: EditEnv = { hostZone: "Europe/Berlin", me: "me@example.com" };
 
 const ics = (extra: string[] = [], header = "DTSTART;TZID=Europe/Berlin:20301016T090000"): string[] => [
   "BEGIN:VCALENDAR",
@@ -26,38 +27,55 @@ const ics = (extra: string[] = [], header = "DTSTART;TZID=Europe/Berlin:20301016
 const main = (lines: readonly string[]) =>
   events(lines).find((e) => prop(e, "RECURRENCE-ID") === undefined) ?? [];
 const base = { calendar: "work", uid: "u1" };
+const update = (lines: readonly string[], p: Partial<UpdateParams>, env = ENV) =>
+  updateLines(lines, { ...base, ...p }, NOW, env);
 
 describe("updateLines", () => {
-  it("changes text fields, removes with an empty string, and marks the event modified", () => {
+  it("changes text fields, removes with an empty string; a text change is no revision", () => {
     const out = unwrap(
-      updateLines(
-        ics(["DESCRIPTION:old"]),
-        { ...base, summary: "Sync, daily", location: "", description: "a\nb" },
-        NOW,
-      ),
+      update(ics(["DESCRIPTION:old"]), { summary: "Sync, daily", location: "", description: "a\nb" }),
     );
     const e = main(out);
     expect(prop(e, "SUMMARY")?.value).toBe("Sync\\, daily");
     expect(prop(e, "LOCATION")).toBeUndefined();
     expect(prop(e, "DESCRIPTION")?.value).toBe("a\\nb");
-    expect(prop(e, "SEQUENCE")?.value).toBe("2");
+    expect(prop(e, "SEQUENCE")?.value).toBe("1");
     expect(prop(e, "LAST-MODIFIED")?.value).toBe("20300101T100000Z");
+    expect(prop(e, "DTSTAMP")?.value).toBe("20300101T100000Z");
     expect(prop(e, "UID")?.value).toBe("u1");
   });
 
-  it("moves the event, keeping the time zone parameter and dropping a DURATION", () => {
-    const out = unwrap(
-      updateLines(ics(["DURATION:PT1H"]), { ...base, start: "2030-10-17 10:00", end: "10:45" }, NOW),
-    );
+  it("works without an environment when only text changes", () => {
+    const out = unwrap(updateLines(ics(), { ...base, summary: "x" }, NOW));
+    expect(prop(main(out), "SUMMARY")?.value).toBe("x");
+  });
+
+  it("drops the vendor's copy of the description only when the description changes", () => {
+    const lines = ics(["DESCRIPTION:old", "X-ALT-DESC;FMTTYPE=text/html:<p>old</p>"]);
+    expect(prop(main(unwrap(update(lines, { summary: "s" }))), "X-ALT-DESC")).toBeDefined();
+    expect(prop(main(unwrap(update(lines, { description: "new" }))), "X-ALT-DESC")).toBeUndefined();
+  });
+
+  it("moves the event (times are the host zone's), keeping the zone parameter and dropping a DURATION", () => {
+    const out = unwrap(update(ics(["DURATION:PT1H"]), { start: "2030-10-17 10:00", end: "10:45" }));
     const e = main(out);
     expect(prop(e, "DTSTART")).toMatchObject({ params: ";TZID=Europe/Berlin", value: "20301017T100000" });
     expect(prop(e, "DTEND")).toMatchObject({ params: ";TZID=Europe/Berlin", value: "20301017T104500" });
     expect(prop(e, "DURATION")).toBeUndefined();
+    expect(prop(e, "SEQUENCE")?.value).toBe("2");
+  });
+
+  it("converts the host time into the zone of a TZID event", () => {
+    const lines = ics().map((l) => l.replaceAll("Europe/Berlin", "America/New_York"));
+    const e = main(unwrap(update(lines, { start: "2030-10-17 10:00", end: "10:45" })));
+    // 10:00 in Berlin (CEST) is 04:00 in New York (EDT)
+    expect(prop(e, "DTSTART")?.value).toBe("20301017T040000");
+    expect(prop(e, "DTEND")?.value).toBe("20301017T044500");
   });
 
   it("moves a floating event and adds a missing DTEND", () => {
     const lines = ics([], "DTSTART:20301016T090000").filter((l) => !l.startsWith("DTEND"));
-    const e = main(unwrap(updateLines(lines, { ...base, start: "2030-10-16 11:00", end: "12:00" }, NOW)));
+    const e = main(unwrap(update(lines, { start: "2030-10-16 11:00", end: "12:00" })));
     expect(prop(e, "DTSTART")?.value).toBe("20301016T110000");
     expect(prop(e, "DTEND")?.value).toBe("20301016T120000");
   });
@@ -72,7 +90,7 @@ describe("updateLines", () => {
       "END:VEVENT",
       "END:VCALENDAR",
     ];
-    const out = unwrap(updateLines(lines, { ...base, summary: "Renamed" }, NOW));
+    const out = unwrap(update(lines, { summary: "Renamed" }));
     const all = events(out);
     expect(all.map((e) => prop(e, "SUMMARY")?.value)).toEqual(["Renamed", "Special"]);
   });
@@ -87,25 +105,25 @@ describe("updateLines", () => {
     [{ start: "2030-10-17 10:00", end: "10h" }, /end must be/],
     [{ start: "2030-02-31 10:00", end: "11:00" }, /not a real calendar date/],
     [{ start: "2030-10-17 10:00", end: "10:00" }, /end must be after start/],
+    [{ organizer: "x@example.com", summary: "s" }, /organizer of an event cannot be changed/],
   ])("rejects %j", (change, message) => {
-    expect(failure(updateLines(ics(), { ...base, ...change }, NOW)).message).toMatch(message);
+    expect(failure(update(ics(), change)).message).toMatch(message);
   });
 
-  it("moves an event stored in UTC, in UTC", () => {
+  it("moves an event stored in UTC to the UTC instant of the host time", () => {
     const lines = ics([], "DTSTART:20301016T090000Z");
-    const e = main(unwrap(updateLines(lines, { ...base, start: "2030-10-17 10:00", end: "11:00" }, NOW)));
-    expect(prop(e, "DTSTART")?.value).toBe("20301017T100000Z");
-    expect(prop(e, "DTEND")?.value).toBe("20301017T110000Z");
+    const e = main(unwrap(update(lines, { start: "2030-10-17 10:00", end: "11:00" })));
+    // 10:00 in Berlin on 17 Oct 2030 is 08:00Z (CEST), and the value stays a UTC value without TZID
+    expect(prop(e, "DTSTART")?.value).toBe("20301017T080000Z");
+    expect(prop(e, "DTEND")?.value).toBe("20301017T090000Z");
   });
 
   it("refuses to move all-day events and series with exceptions", () => {
-    const move = { ...base, start: "2030-10-17 10:00", end: "11:00" };
-    expect(failure(updateLines(ics([], "DTSTART;VALUE=DATE:20301016"), move, NOW)).message).toMatch(
-      /all-day/,
-    );
-    expect(failure(updateLines(ics([], "DTSTART:20301016"), move, NOW)).message).toMatch(/all-day/);
-    expect(failure(updateLines(ics(["EXDATE:20301017T090000"]), move, NOW)).message).toMatch(/exceptions/);
-    expect(failure(updateLines(ics(["RDATE:20301017T090000"]), move, NOW)).message).toMatch(/exceptions/);
+    const move = { start: "2030-10-17 10:00", end: "11:00" };
+    expect(failure(update(ics([], "DTSTART;VALUE=DATE:20301016"), move)).message).toMatch(/all-day/);
+    expect(failure(update(ics([], "DTSTART:20301016"), move)).message).toMatch(/all-day/);
+    expect(failure(update(ics(["EXDATE:20301017T090000"]), move)).message).toMatch(/exceptions/);
+    expect(failure(update(ics(["RDATE:20301017T090000"]), move)).message).toMatch(/exceptions/);
     const withOverride = [
       ...ics().slice(0, -1),
       "BEGIN:VEVENT",
@@ -113,25 +131,68 @@ describe("updateLines", () => {
       "END:VEVENT",
       "END:VCALENDAR",
     ];
-    expect(failure(updateLines(withOverride, move, NOW)).message).toMatch(/exceptions/);
+    expect(failure(update(withOverride, move)).message).toMatch(/exceptions/);
     // text of such a series can still change
-    unwrap(updateLines(withOverride, { ...base, summary: "x" }, NOW));
+    unwrap(update(withOverride, { summary: "x" }));
+  });
+
+  it("refuses a move to a day the repeat rule does not name, and allows one it does", () => {
+    const weekly = ics(["RRULE:FREQ=WEEKLY;BYDAY=WE"], "DTSTART;TZID=Europe/Berlin:20301016T090000");
+    // 16 Oct 2030 is a Wednesday: Thursday the 17th breaks the rule, the 23rd keeps it
+    expect(failure(update(weekly, { start: "2030-10-17 10:00", end: "11:00" })).message).toMatch(
+      /does not fit the repeat rule \(FREQ=WEEKLY;BYDAY=WE\)/,
+    );
+    const ok = main(unwrap(update(weekly, { start: "2030-10-23 10:00", end: "11:00" })));
+    expect(prop(ok, "DTSTART")?.value).toBe("20301023T100000");
+    const monthly = ics(["RRULE:FREQ=MONTHLY;BYDAY=3WE;BYMONTH=10,11"]);
+    expect(unwrap(update(monthly, { start: "2030-10-16 10:00", end: "11:00" })).length).toBeGreaterThan(0);
+    expect(failure(update(monthly, { start: "2030-10-23 10:00", end: "11:00" })).message).toMatch(
+      /repeat rule/,
+    );
+    const last = ics(["RRULE:FREQ=MONTHLY;BYDAY=-1WE;BYMONTHDAY=-1,25"]);
+    expect(failure(update(last, { start: "2030-10-30 10:00", end: "11:00" })).message).toMatch(/repeat rule/);
+    expect(
+      failure(update(ics(["RRULE:FREQ=YEARLY;BYMONTH=3"]), { start: "2030-10-16 10:00", end: "11:00" }))
+        .message,
+    ).toMatch(/repeat rule/);
+    expect(
+      failure(update(ics(["RRULE:FREQ=MONTHLY;BYMONTHDAY=1"]), { start: "2030-10-16 10:00", end: "11:00" }))
+        .message,
+    ).toMatch(/repeat rule/);
   });
 
   it("reports a file without a DTSTART or a main event", () => {
-    const move = { ...base, start: "2030-10-17 10:00", end: "11:00" };
+    const move = { start: "2030-10-17 10:00", end: "11:00" };
     expect(
       failure(
-        updateLines(
+        update(
           ics().filter((l) => !l.startsWith("DTSTART")),
           move,
-          NOW,
         ),
       ).message,
     ).toMatch(/no DTSTART/);
-    expect(
-      failure(updateLines(["BEGIN:VCALENDAR", "END:VCALENDAR"], { ...base, summary: "x" }, NOW)).message,
-    ).toMatch(/no main event/);
+    expect(failure(update(["BEGIN:VCALENDAR", "END:VCALENDAR"], { summary: "x" })).message).toMatch(
+      /no main event/,
+    );
+    expect(failure(update(ics([], "DTSTART:soon"), move)).message).toMatch(/no readable DTSTART/);
+  });
+
+  it("refuses to change the time of an event somebody else organizes, but changes its text", () => {
+    const invited = ics(["ORGANIZER:mailto:boss@example.com"]);
+    const move = { start: "2030-10-17 10:00", end: "11:00" };
+    expect(failure(update(invited, move)).message).toMatch(/organized by boss@example.com, not by you/);
+    expect(failure(update(invited, move, { ...ENV, me: undefined })).message).toMatch(
+      /no address is configured/,
+    );
+    const renamed = unwrap(update(invited, { summary: "mine" }));
+    expect(prop(main(renamed), "SEQUENCE")?.value).toBe("1");
+    // the organizer may move it, in any spelling of the address
+    const own = ics(["ORGANIZER:MAILTO:Me@Example.com"]);
+    expect(prop(main(unwrap(update(own, move))), "SEQUENCE")?.value).toBe("2");
+    expect(organizerNote(invited, ENV)).toMatch(/boss@example.com organizes this event and is not told/);
+    expect(organizerNote(own, ENV)).toBeUndefined();
+    expect(organizerNote(ics(), ENV)).toBeUndefined();
+    expect(organizerNote(["BEGIN:VCALENDAR", "END:VCALENDAR"], ENV)).toBeUndefined();
   });
 });
 
@@ -203,5 +264,12 @@ describe("vdir and updateEvent", () => {
     expect(await runOk(updateEvent(settings(), { ...base, location: "Hall" }, "n1", NOW))).toMatch(
       /^Updated/,
     );
+  });
+
+  it("tells the user when an event somebody else organizes was changed", async () => {
+    const lines = ics(["ORGANIZER:mailto:boss@example.com"]).join("\r\n");
+    await writeFile(join(vdir, "a.ics"), `${lines}\r\n`);
+    const out = await runOk(updateEvent(settings(), { ...base, summary: "Plan" }, "n1", NOW));
+    expect(out).toMatch(/boss@example.com organizes this event and is not told/);
   });
 });

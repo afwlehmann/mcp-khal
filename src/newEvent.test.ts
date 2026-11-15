@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CalendarConfig } from "./config.js";
@@ -162,6 +162,35 @@ describe("newEvent", () => {
       expect(e._tag).toBe("IoError");
       expect(await written()).toMatch(/SUMMARY:Lunch/);
       expect(await files()).toEqual([FILE]);
+    });
+
+    it("refuses a uid that another file of the calendar already holds, and writes nothing", async () => {
+      const held = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//x//EN",
+        "BEGIN:VEVENT",
+        `UID:${UID}@mcp-khal`,
+        "DTSTAMP:20260101T000000Z",
+        "DTSTART;VALUE=DATE:20260101",
+        "SUMMARY:Imported",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n");
+      await writeFile(join(dir, "imported.ics"), held);
+      const e = await runFail(newEvent(settings(), plain, UID, NOW));
+      expect(e).toBeInstanceOf(InvalidInput);
+      expect(e.message).toMatch(/already used by another event/);
+      expect(await files()).toEqual(["imported.ics"]);
+      expect(await readFile(join(dir, "imported.ics"), "utf8")).toBe(held);
+    });
+
+    it("ignores unrelated and unreadable files when it checks the uid", async () => {
+      await writeFile(join(dir, "notes.txt"), "UID:fixed-uid@mcp-khal");
+      await mkdir(join(dir, "folder.ics"));
+      await runOk(newEvent(settings(), plain, UID, NOW));
+      expect((await files()).sort()).toEqual(["folder.ics", FILE, "notes.txt"].sort());
     });
 
     it("fails when the vdir does not exist", async () => {

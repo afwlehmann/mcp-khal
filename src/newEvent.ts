@@ -5,7 +5,7 @@ import { stamp, unfoldLines } from "./ics.js";
 import { parseEventTimes } from "./range.js";
 import { buildIcs, type RecurrenceSpec } from "./recurrence.js";
 import type { Settings } from "./settings.js";
-import { createEvent, newFileIn, vdirOf } from "./vdir.js";
+import { createEvent, findEvent, newFileIn, vdirOf } from "./vdir.js";
 
 export interface NewEventInput {
   readonly calendar?: string | undefined;
@@ -100,6 +100,18 @@ const create = (
         timestamp(now),
       ),
     );
+    // a UID is unique in its calendar collection (RFC 4791 4.1): another file with this UID means
+    // no new file. The file of this very name is left to `createEvent`, which refuses to overwrite it.
+    const holder = yield* Effect.match(findEvent(settings, calendar, fullUid), {
+      onFailure: () => undefined,
+      onSuccess: (stored) => stored,
+    });
+    if (holder !== undefined && holder.file !== file)
+      return yield* Effect.fail(
+        new InvalidInput({
+          message: `uid ${fullUid} is already used by another event in calendar '${calendar}'`,
+        }),
+      );
     yield* createEvent(file, unfoldLines(ics));
     return `Created event '${p.summary.trim()}' (uid ${fullUid}) in calendar '${calendar}'.`;
   });

@@ -1,20 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
+  attendeeOf,
+  calendarWarnings,
+  classifyFile,
+  escapeText,
   events,
+  fileUids,
   formatProp,
   isMaster,
   mapEvents,
+  mapEventsChecked,
   param,
+  paramsOf,
   parseProp,
   prop,
   props,
+  restamp,
+  sequenceOf,
   serialize,
+  setDescription,
   setProp,
   stamp,
+  structureProblems,
   touch,
   uidOf,
+  unescapeText,
   unfoldLines,
 } from "./ics.js";
+import { failure, unwrap } from "./testlib.js";
 
 const SAMPLE = [
   "BEGIN:VCALENDAR",
@@ -109,8 +122,114 @@ describe("events", () => {
   });
 });
 
+describe("structure", () => {
+  it("pairs BEGIN and END and reports what is left over, with a line number", () => {
+    expect(structureProblems(SAMPLE)).toEqual([]);
+    expect(structureProblems(["END:VEVENT"])).toEqual([
+      "END:VEVENT (content line 1) has no matching BEGIN:VEVENT",
+    ]);
+    expect(structureProblems(["BEGIN:VCALENDAR", "BEGIN:VEVENT", "END:VCALENDAR"])).toEqual([
+      "BEGIN:VEVENT (content line 2) has no matching END:VEVENT",
+    ]);
+    expect(structureProblems(["BEGIN:VEVENT", "BEGIN:VALARM"])).toHaveLength(2);
+  });
+
+  it("never duplicates or touches the lines of a VEVENT without END", () => {
+    const broken = ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "UID:a", "SUMMARY:x", "END:VCALENDAR"];
+    expect(events(broken)).toEqual([]);
+    expect(mapEvents(broken, () => ["X"])).toEqual(broken);
+    expect(failure(mapEventsChecked(broken, (e) => e)).message).toMatch(
+      /malformed: BEGIN:VEVENT \(content line 2\) has no matching END:VEVENT/,
+    );
+    expect(unwrap(mapEventsChecked(SAMPLE, (e) => e))).toEqual(SAMPLE);
+  });
+
+  it("finds the events of a nested or repeated VEVENT only once", () => {
+    const nested = ["BEGIN:VEVENT", "UID:a", "BEGIN:VEVENT", "UID:b", "END:VEVENT", "END:VEVENT"];
+    expect(events(nested)).toHaveLength(1);
+    expect(fileUids(SAMPLE)).toEqual(["u1"]);
+    expect(fileUids(["BEGIN:VEVENT", "UID: x ", "END:VEVENT", "BEGIN:VEVENT", "END:VEVENT"])).toEqual([
+      "x",
+      undefined,
+    ]);
+  });
+
+  it("classifies a file by what it holds", () => {
+    expect(classifyFile(SAMPLE)).toEqual({ kind: "event", uid: "u1" });
+    expect(
+      classifyFile(["BEGIN:VCALENDAR", "BEGIN:VTODO", "UID:t", "END:VTODO", "END:VCALENDAR"]),
+    ).toMatchObject({
+      reason: "holds no VEVENT (only VTODO), skipped",
+    });
+  });
+});
+
+describe("text, parameters and defaults", () => {
+  it("escapes and unescapes TEXT", () => {
+    expect(unescapeText(escapeText("a\\b;c,d\ne:f"))).toBe("a\\b;c,d\ne:f");
+    expect(unescapeText("keep \\x")).toBe("keep \\x");
+  });
+
+  it("reads and writes parameters", () => {
+    expect(paramsOf(';A=1;NOEQUALS;B="x,y",z;C=')).toEqual([
+      { name: "A", values: ["1"] },
+      { name: "B", values: ["x,y", "z"] },
+      { name: "C", values: [""] },
+    ]);
+    expect(param(parseProp("X;A=1;A=2:v"), "a")).toBe("1");
+    expect(param(parseProp("X;B=u,v:v"), "B")).toBe("u,v");
+  });
+
+  it("reads an attendee with the defaults of RFC 5545", () => {
+    expect(attendeeOf(parseProp("ATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=TENTATIVE:mailto:a@b.co"))).toEqual({
+      address: "mailto:a@b.co",
+      cutype: "INDIVIDUAL",
+      role: "OPT-PARTICIPANT",
+      rsvp: false,
+      partstat: "TENTATIVE",
+    });
+  });
+
+  it("warns about a CALSCALE and an unusual VERSION, and about a calendar without a VCALENDAR", () => {
+    expect(
+      calendarWarnings(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:x", "CALSCALE:JULIAN", "END:VCALENDAR"]),
+    ).toHaveLength(1);
+  });
+
+  it("sets the description and drops the stale X-ALT-DESC only when the description changes", () => {
+    const e = ["BEGIN:VEVENT", "DESCRIPTION:old", "X-ALT-DESC;FMTTYPE=text/html:<b>old</b>", "END:VEVENT"];
+    expect(setDescription(e, "DESCRIPTION:old")).toEqual(e);
+    expect(setDescription(e, "DESCRIPTION:new")).toEqual(["BEGIN:VEVENT", "DESCRIPTION:new", "END:VEVENT"]);
+    expect(setDescription(e, undefined)).toEqual(["BEGIN:VEVENT", "END:VEVENT"]);
+    const noAlt = ["BEGIN:VEVENT", "END:VEVENT"];
+    expect(setDescription(noAlt, undefined)).toEqual(noAlt);
+    expect(setDescription(noAlt, "DESCRIPTION:x")).toEqual(["BEGIN:VEVENT", "DESCRIPTION:x", "END:VEVENT"]);
+  });
+});
+
 describe("touch", () => {
   const now = new Date("2030-01-01T10:00:00.500Z");
+
+  it("never lets a stamp go back, and keeps SEQUENCE a valid integer", () => {
+    const e = [
+      "BEGIN:VEVENT",
+      "DTSTAMP:20400101T000000Z",
+      "LAST-MODIFIED:bad",
+      "SEQUENCE:2147483647",
+      "END:VEVENT",
+    ];
+    const t = touch(e, now);
+    expect(prop(t, "DTSTAMP")?.value).toBe("20400101T000000Z");
+    expect(prop(t, "LAST-MODIFIED")?.value).toBe("20300101T100000Z");
+    expect(prop(t, "SEQUENCE")?.value).toBe("2147483647");
+    expect(prop(restamp(e, now), "SEQUENCE")?.value).toBe("2147483647");
+    for (const bad of ["1.5", "1e3", "-4", "0x10", "", "99999999999"])
+      expect(prop(touch(["BEGIN:VEVENT", `SEQUENCE:${bad}`, "END:VEVENT"], now), "SEQUENCE")?.value).toMatch(
+        /^\d+$/,
+      );
+    expect(sequenceOf(["BEGIN:VEVENT", "SEQUENCE:+7", "END:VEVENT"])).toBe(7);
+    expect(prop(touch(["BEGIN:VEVENT", "SEQUENCE:1e3", "END:VEVENT"], now), "SEQUENCE")?.value).toBe("1");
+  });
 
   it("formats a UTC stamp", () => {
     expect(stamp(now)).toBe("20300101T100000Z");

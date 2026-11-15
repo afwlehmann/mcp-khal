@@ -82,9 +82,12 @@ export const repeatPattern = (rules: readonly string[]): string =>
     .filter((r) => r !== "")
     .join(", ");
 
-/** RFC 5545 TEXT unescaping. */
+/**
+ * RFC 5545 3.3.11 TEXT unescaping. A backslash before a colon is not standard (a colon is never
+ * escaped) but some producers write it; it is read as a plain colon.
+ */
 const unescapeText = (s: string): string =>
-  s.replace(/\\([nN,;\\])/g, (_m, c: string) => (c === "n" || c === "N" ? "\n" : c));
+  s.replace(/\\([nN,;:\\])/g, (_m, c: string) => (c === "n" || c === "N" ? "\n" : c));
 
 const textOf = (e: Event, name: string): string => unescapeText(prop(e, name)?.value.trim() ?? "");
 
@@ -97,6 +100,24 @@ const person = (p: Prop): string => {
   return name !== "" && email !== "" ? `${name} <${email}>` : name !== "" ? name : email;
 };
 
+/** Title shown instead of the summary of an event the read tools must not reveal. */
+export const PRIVATE_TITLE = "Private event";
+
+export type Classification = "PUBLIC" | "PRIVATE" | "CONFIDENTIAL";
+
+/**
+ * RFC 5545 3.8.1.3 CLASS: PUBLIC when absent, and any value that is not PUBLIC, PRIVATE or
+ * CONFIDENTIAL counts as PRIVATE. Of several CLASS lines the first counts.
+ */
+export const classification = (e: Event): Classification => {
+  const v = prop(e, "CLASS")?.value.trim().toUpperCase();
+  return v === undefined || v === "PUBLIC" ? "PUBLIC" : v === "CONFIDENTIAL" ? "CONFIDENTIAL" : "PRIVATE";
+};
+
+/** RFC 5545 3.8.2.7 TRANSP: OPAQUE when absent or not TRANSPARENT. */
+export const transparency = (e: Event): "OPAQUE" | "TRANSPARENT" =>
+  prop(e, "TRANSP")?.value.trim().toUpperCase() === "TRANSPARENT" ? "TRANSPARENT" : "OPAQUE";
+
 interface Text {
   readonly title: string;
   readonly location: string;
@@ -105,21 +126,44 @@ interface Text {
   readonly status: string;
   readonly description: string;
   readonly repeat: string;
+  /** true when the details are hidden (CLASS is not PUBLIC): `title` is then the placeholder */
+  readonly hidden: boolean;
 }
 
-/** The text of one VEVENT, with only its own recurrence rules (an exception has none). */
-const textFields = (e: Event): Text => ({
-  title: textOf(e, "SUMMARY"),
-  location: textOf(e, "LOCATION"),
-  organizer: (([o]) => (o === undefined ? "" : person(o)))(props(e, "ORGANIZER")),
-  attendees: props(e, "ATTENDEE")
-    .map(person)
-    .filter((a) => a !== "")
-    .join(", "),
-  status: (prop(e, "STATUS")?.value.trim() ?? "").toUpperCase(),
-  description: textOf(e, "DESCRIPTION"),
-  repeat: repeatPattern(props(e, "RRULE").map((r) => r.value)),
-});
+/**
+ * The text of one VEVENT, with only its own recurrence rules (an exception has none). An event
+ * whose CLASS is not PUBLIC shows only its placeholder title and its status: no location,
+ * description, organizer, attendees or repeat rule. An exception without CLASS of its own
+ * inherits the hiding of its main event (it must not reveal what the series hides).
+ */
+const textFields = (e: Event, inheritedHidden: boolean): Text => {
+  const status = (prop(e, "STATUS")?.value.trim() ?? "").toUpperCase();
+  const hidden = prop(e, "CLASS") === undefined ? inheritedHidden : classification(e) !== "PUBLIC";
+  return hidden
+    ? {
+        title: PRIVATE_TITLE,
+        location: "",
+        organizer: "",
+        attendees: "",
+        status,
+        description: "",
+        repeat: "",
+        hidden: true,
+      }
+    : {
+        title: textOf(e, "SUMMARY"),
+        location: textOf(e, "LOCATION"),
+        organizer: (([o]) => (o === undefined ? "" : person(o)))(props(e, "ORGANIZER")),
+        attendees: props(e, "ATTENDEE")
+          .map(person)
+          .filter((a) => a !== "")
+          .join(", "),
+        status,
+        description: textOf(e, "DESCRIPTION"),
+        repeat: repeatPattern(props(e, "RRULE").map((r) => r.value)),
+        hidden: false,
+      };
+};
 
 // ---------- pure: dates in the host zone ----------
 
@@ -176,6 +220,8 @@ export interface Ranked {
   readonly start: number;
   readonly end: number;
   readonly event: CalendarEvent;
+  /** the details of the event are hidden (CLASS is not PUBLIC); search must not look at it */
+  readonly hidden?: boolean;
 }
 
 /**
@@ -193,35 +239,40 @@ export const renderFile = (
   const evs = eventsOf(raw.lines);
   const master = evs.find(isMaster);
   const host = ianaZone(hostZone);
-  if (master === undefined) return problem("the file holds no main event");
+  if (evs.length === 0) return problem("the file holds no main event");
   if (Result.isFailure(host)) return problem(host.failure.message);
   const zone = host.success;
 
-  const expanded = occurrencesIn(raw.lines, fromMs, toMs, hostZone);
+  // A file with exceptions only (RFC 4791 4.1) has no main event: each exception stands for itself.
+  const expanded: Result.Result<readonly Instance[], InvalidInput> =
+    master === undefined ? Result.succeed([]) : occurrencesIn(raw.lines, fromMs, toMs, hostZone);
   if (Result.isFailure(expanded)) return problem(expanded.failure.message);
 
-  const overrides = evs.filter((e) => !isMaster(e));
-  const overrideTexts = new Map<number, Text>();
-  const failures: string[] = [];
-  for (const o of overrides) {
-    const r = occurrencesIn(onlyOverride(raw.lines, o), fromMs, toMs, hostZone);
-    if (Result.isFailure(r)) failures.push(`${raw.file}: ${r.failure.message}`);
-    else for (const i of r.success) overrideTexts.set(i.start, textFields(o));
-  }
-  const base = textFields(master);
+  const base = master === undefined ? undefined : textFields(master, false);
+  const runs = evs
+    .filter((e) => !isMaster(e))
+    .map((o) => ({
+      text: textFields(o, base?.hidden ?? false),
+      run: occurrencesIn(onlyOverride(raw.lines, o), fromMs, toMs, hostZone),
+    }));
+  const failures = runs.flatMap(({ run }) =>
+    Result.isFailure(run) ? [`${raw.file}: ${run.failure.message}`] : [],
+  );
+  const standalone = runs.flatMap(({ text, run }) =>
+    Result.isSuccess(run) ? run.success.map((i) => ({ i, text })) : [],
+  );
+  const overrideTexts = new Map(standalone.map(({ i, text }) => [i.start, text] as const));
+  const place = (i: Instance, t: Text): Ranked => ({
+    start: i.start,
+    end: i.end,
+    hidden: t.hidden,
+    event: render(calendar, raw.uid, t, i, instantToWall(zone, i.start), instantToWall(zone, i.end)),
+  });
   return {
-    events: expanded.success.map((i) => ({
-      start: i.start,
-      end: i.end,
-      event: render(
-        calendar,
-        raw.uid,
-        overrideTexts.get(i.start) ?? base,
-        i,
-        instantToWall(zone, i.start),
-        instantToWall(zone, i.end),
-      ),
-    })),
+    events:
+      base === undefined
+        ? standalone.map(({ i, text }) => place(i, text))
+        : expanded.success.map((i) => place(i, overrideTexts.get(i.start) ?? base)),
     problems: failures,
   };
 };
@@ -276,7 +327,7 @@ const collect = (
   settings: Settings,
   calendar: string | undefined,
   range: V<{ readonly from: Date; readonly to: Date }>,
-  keep: (e: CalendarEvent) => boolean,
+  keep: (r: Ranked) => boolean,
 ): Effect.Effect<EventsResult, InvalidInput> =>
   Effect.gen(function* () {
     const window = yield* Effect.fromResult(range);
@@ -291,7 +342,7 @@ const collect = (
         Effect.map(readCalendar(ref.path), (read) => {
           const files = read.events.map((e) => renderFile(ref.name, e, fromMs, toMs, settings.timezone));
           return {
-            ranked: files.flatMap((f) => f.events).filter((r) => keep(r.event)),
+            ranked: files.flatMap((f) => f.events).filter(keep),
             problems: [...read.problems, ...files.flatMap((f) => f.problems)],
           };
         }),
@@ -321,7 +372,10 @@ export const eventsInRange = (
 ): Effect.Effect<EventsResult, InvalidInput> =>
   collect(settings, q.calendar, parseRange(`${q.start.trim()} ${q.end.trim()}`, now, settings.timezone), all);
 
-/** Occurrences whose title, location or description contain the text (no patterns), in the window. */
+/**
+ * Occurrences whose title, location or description contain the text (no patterns), in the window.
+ * Events with hidden details (CLASS not PUBLIC) never match: not even their placeholder title.
+ */
 export const searchEvents = (
   settings: Settings,
   q: SearchQuery,
@@ -330,7 +384,10 @@ export const searchEvents = (
   Effect.gen(function* () {
     const query = yield* Effect.fromResult(checkQuery(q.query));
     const words = q.range === undefined ? searchWindow(now, settings.timezone) : q.range;
-    return yield* collect(settings, q.calendar, parseRange(words, now, settings.timezone), (e) =>
-      matchesQuery(e, query),
+    return yield* collect(
+      settings,
+      q.calendar,
+      parseRange(words, now, settings.timezone),
+      (r) => r.hidden !== true && matchesQuery(r.event, query),
     );
   });

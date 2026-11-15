@@ -17,37 +17,40 @@ export type Weekday = z.infer<typeof Weekday>;
 const Nth = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(-1)]);
 const Interval = z.number().int().min(1).max(99).optional().describe("Every n-th period; default 1");
 
+// Every object is strict: a rule part the caller invents (BYMONTHDAY on a weekly rule, BYSETPOS,
+// BYHOUR on an all-day event, ...) is an error, never silently dropped. The shapes below are the
+// only ones that exist, and each of them is a combination RFC 5545 3.3.10 allows.
 export const Recurrence = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("daily"), interval: Interval }),
-  z.object({
+  z.strictObject({ kind: z.literal("daily"), interval: Interval }),
+  z.strictObject({
     kind: z.literal("weekly"),
     interval: Interval,
     weekdays: z.array(Weekday).min(1).max(7).describe("Must include the weekday of the first occurrence"),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("monthly_day"),
     interval: Interval,
     day: z.number().int().min(1).max(31).describe("Day of month; must equal the day of the first occurrence"),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("monthly_weekday"),
     interval: Interval,
     nth: Nth.describe("1-4, or -1 for the last"),
     weekday: Weekday,
   }),
-  z.object({ kind: z.literal("yearly"), interval: Interval }),
+  z.strictObject({ kind: z.literal("yearly"), interval: Interval }),
 ]);
 export type Recurrence = z.infer<typeof Recurrence>;
 
 export const Ending = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("never") }),
-  z.object({ kind: z.literal("count"), count: z.number().int().min(1).max(1000) }),
-  z.object({ kind: z.literal("until"), date: z.string().max(32).describe("YYYY-MM-DD, inclusive") }),
+  z.strictObject({ kind: z.literal("never") }),
+  z.strictObject({ kind: z.literal("count"), count: z.number().int().min(1).max(1000) }),
+  z.strictObject({ kind: z.literal("until"), date: z.string().max(32).describe("YYYY-MM-DD, inclusive") }),
 ]);
 export type Ending = z.infer<typeof Ending>;
 
 /** `ending` only exists inside a recurrence. */
-export const RecurrenceSpec = z.object({
+export const RecurrenceSpec = z.strictObject({
   pattern: Recurrence,
   ending: Ending.optional().describe("Default: never"),
 });
@@ -239,8 +242,12 @@ export const MAX_ADDRESS = 254;
 /** Any control character (C0, DEL, C1 incl. U+0085) or U+2028/2029 would break the ICS line or inject a property. */
 const ADDRESS_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u;
 
+/** Characters that may not appear in a URI (RFC 3986) or that start a query or fragment of a mailto URI (RFC 6068). */
+const ADDRESS_NOT_URI = /["\\^`{}|%?#]/;
+
+/** A CAL-ADDRESS is a URI (RFC 5545 3.3.3): always `mailto:`, in the form of RFC 6047 2.3. */
 const mailto = (field: string, s: string): V<string> =>
-  s.length <= MAX_ADDRESS && !ADDRESS_CONTROL.test(s) && isEmail(s)
+  s.length <= MAX_ADDRESS && !ADDRESS_CONTROL.test(s) && !ADDRESS_NOT_URI.test(s) && isEmail(s)
     ? Result.succeed(`mailto:${s}`)
     : Result.fail(invalid(`${field} ${JSON.stringify(s)} is not a valid email address`));
 
@@ -263,6 +270,16 @@ const inviteLines = (organizer: string | undefined, attendees: readonly string[]
     ];
   });
 
+/**
+ * A UID is written as is (it is TEXT, but never escaped), so it must be plain: letters, digits and
+ * `._@-`, fewer than 255 octets, no `..`. That keeps it free of anything that needs escaping, of
+ * line breaks and of path tricks (RFC 5545 3.8.4.7, RFC 7986 5.3).
+ */
+const UID_FORM = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._@-]{0,253}$/;
+
+/** DTSTAMP is always a UTC date-time (RFC 5545 3.8.7.2). */
+const STAMP_FORM = /^\d{8}T\d{6}Z$/;
+
 /** Pure: uid and stamp are injected so the output is deterministic. */
 export const buildIcs = (
   p: IcsEventParams,
@@ -270,6 +287,12 @@ export const buildIcs = (
   stamp: string, // YYYYMMDDTHHMMSSZ
 ): V<string> =>
   Result.gen(function* () {
+    if (!UID_FORM.test(uid))
+      return yield* Result.fail(
+        invalid("uid must be 1-254 characters of letters, digits and . _ @ - (no '..')"),
+      );
+    if (!STAMP_FORM.test(stamp))
+      return yield* Result.fail(invalid("DTSTAMP must be a UTC time like 20261102T100000Z"));
     if (p.summary.trim() === "") return yield* Result.fail(invalid("summary must not be empty"));
     const t = p.times;
     const firstDay = t.allDay ? t.startDate : t.start.slice(0, 10);
