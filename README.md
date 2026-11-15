@@ -2,7 +2,7 @@
 
 An MCP server that lets an assistant read, create and change events in your local iCalendar (`.ics`) calendars, stored as a [vdir](https://vdirsyncer.pimutils.org/en/stable/vdir.html) (one `.ics` file per event in a directory, as [vdirsyncer](https://github.com/pimutils/vdirsyncer) keeps them). The server parses and writes the files itself: it needs no khal and no Python, only Node.
 
-The name is historical: version 2.x ran the `khal` command line tool. See [What changed in 3.0](#what-changed-in-30).
+The name is historical: version 2.x ran the `khal` command line tool. See the [changelog](CHANGELOG.md).
 
 ## Tools
 
@@ -197,21 +197,6 @@ Then the values against the machine:
 
 `mcp-khal setup` applies the first group but not the machine checks, so it can still be used to repair a configuration whose directories are gone.
 
-### What changed in 3.0
-Version 3.0 is a breaking release: the server no longer runs `khal`.
-
-- **No khal.** Calendars are read and written as `.ics` files directly. khal, Python and khal's own config file are not needed any more, and nothing is run as a subprocess.
-- **`path` is required** on every calendar and is where the events are. Calendars are no longer discovered from khal: list each one under `calendars` with the `path` its vdir has in your khal or vdirsyncer config.
-- **The `khal` config key and `MCP_KHAL_BIN` are gone.** A config file that still has `"khal": …` is rejected as an unknown key, so delete it. `MCP_KHAL_BIN` is not read. In the Home Manager module, `khalPackage` is removed.
-- **Environment variables for every setting**, named by one schema (see [Environment variables](#environment-variables)).
-- **Calendar names** are the keys of `calendars`, not the names khal reported; keep the same names to keep `defaultCalendar` and the per-calendar settings working.
-- **New input grammar.** The tools take ISO ranges and structured fields (see [Ranges](#ranges) and `new_event`) instead of khal's locale-dependent text such as `tomorrow 15:00 1h`, weekday names or `eod`.
-- **Range boundary.** An event is in a range when it intersects `[start, end)`. khal included an event that ended exactly at the start of its query.
-- **No 2037 cap** on endless series: they are expanded as far as the requested range.
-- **Time zones** are handled by the server (see [Time zones](#time-zones)): the host zone comes from `TZ` or the system, and written events carry a proper `VTIMEZONE`.
-- **vdirsyncer stays external.** The server never talks to a CalDAV server; keep syncing with your existing setup.
-- **Output.** The fields of the read tools are unchanged, but the values are now rendered by the server rather than by khal (ISO dates, `HH:MM` times), and search is a plain text match, not an SQL `LIKE`.
-
 ## Standards conformance
 
 The server reads and writes iCalendar (RFC 5545) files in vdir layout and follows RFC 5545, 5546, 6868, 4791 and 7986 where they apply. Every requirement is listed in `spec/*.json` and attributed to a test; the generated report is [`docs/conformance.md`](docs/conformance.md).
@@ -223,101 +208,4 @@ What we tolerate when reading, because real clients produce it (reported where i
 Events with `CLASS:PRIVATE` or `CLASS:CONFIDENTIAL` are shown by the read tools without details (time and a placeholder title only) and cannot be found by searching their text.
 
 ## Nix / Home Manager
-The flake exposes:
-
-| Output | Purpose |
-|---|---|
-| `packages.<system>.default` | The server. The version is taken from `package.json`. It has no runtime dependency besides Node. |
-| `overlays.default` | Adds `pkgs.mcp-khal`. |
-| `homeModules.default` | The Home Manager module `programs.mcp-khal`. |
-
-Supported systems: `aarch64-darwin`, `x86_64-linux` and `aarch64-linux`. `x86_64-darwin` (Intel Macs) is not supported because the pinned nixpkgs dropped it; it would need a nixpkgs 26.05 based input.
-
-### Home Manager module
-Add the flake as an input, import the module and enable it:
-
-```nix
-# flake.nix of your Home Manager configuration
-inputs.mcp-khal.url = "github:<you>/mcp-khal";
-
-# home configuration
-{ config, inputs, ... }:
-{
-  imports = [ inputs.mcp-khal.homeModules.default ];
-
-  programs.mcp-khal = {
-    enable = true;
-    # where new events go when a call names no calendar (required with several calendars)
-    defaultCalendar = "work";
-    # one object per calendar; `path` is required, the rest is optional
-    calendars = {
-      work = {
-        path = "/home/me/.local/share/calendars/work";
-        email = "me@example.com";
-        alarm = "1d";
-      };
-      private = {
-        path = "/home/me/.local/share/calendars/private";
-        email = "me@example.org";
-        alarm = "none";
-      };
-      school = {
-        path = "/home/me/.local/share/calendars/school";
-        alarm = "90m";
-      };
-    };
-  };
-}
-```
-
-Options:
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `programs.mcp-khal.enable` | bool | `false` | Install `mcp-khal` into `home.packages`. |
-| `programs.mcp-khal.package` | package | the flake's `default` package for your system | Override to use your own build or an overlay. |
-| `programs.mcp-khal.defaultCalendar` | null or non-empty string | `null` | The calendar new events go to when a call names none. Required with several calendars; written to the config only when set. See [Default calendar](#default-calendar). |
-| `programs.mcp-khal.calendars.<name>` | submodule | `{ }` | Settings of one calendar, by name. A typed object with the options below; an unknown option (a typo such as `emial`) is an evaluation error. |
-| `programs.mcp-khal.calendars.<name>.path` | absolute path (string) | required | The calendar's vdir, the directory of its `.ics` files. |
-| `programs.mcp-khal.calendars.<name>.email` | null or email address | `null` | Your address on the calendar: the organizer of invites (see [Invites](#invites)). Validated with the same rule as the server, so a typo fails at `home-manager switch` instead of breaking invites later. |
-| `programs.mcp-khal.calendars.<name>.alarm` | null or reminder | `null` | Reminder for new events on the calendar, `none` or unset means no reminder. See [Reminders](#reminders). |
-
-There is no option for the time zone; set `TZ` in the environment of the MCP client's server process if the system zone is not the one you want.
-
-What the module does:
-- It writes `~/.config/mcp-khal.json` through `xdg.configFile` with `defaultCalendar` and `calendars` (options that are not set stay out of the file); see [Configuration](#configuration). The package also ships an example config under `share/doc/mcp-khal/examples/`. This replaces the interactive `mcp-khal setup`. The file lives in the Nix store as a read-only symlink, so change the options instead of rerunning `setup`.
-- A calendar without `path` is an evaluation error.
-
-### Wiring it into an MCP client
-The server speaks MCP over stdio, so the client needs the binary path. For example, with Home Manager's Claude Code module:
-
-```nix
-programs.claude-code.mcpServers.calendar = {
-  command = "${config.programs.mcp-khal.package}/bin/mcp-khal";
-};
-```
-Any other client takes the same `command` with no arguments.
-
-### vdirsyncer
-- mcp-khal never calls vdirsyncer and never talks to a calendar server. It reads and writes the files in each calendar's `path`, which is the directory vdirsyncer's `filesystem` storage keeps in sync (for example the one Home Manager generates from `accounts.calendar`).
-- Getting changes to and from the server is vdirsyncer's job, so keep syncing with your existing setup (for example `services.vdirsyncer` or a timer running `vdirsyncer sync`). A new event or invite reaches the remote calendar after the next sync. The server re-reads the files on every call, so events that a sync brought in show up at once.
-- The server does not send invitation mails; that is left to your sync or mail tooling.
-
-After changing npm dependencies, update `npmDepsHash` in `nix/package.nix` (set it to `lib.fakeHash`, build, copy the reported hash).
-
-### Development
-`nix develop` installs git hooks: `nixfmt`, `biome` (lint + format for TypeScript), `ripsecrets`, the unit tests (`npm test`: typecheck + [vitest](https://vitest.dev) with enforced coverage thresholds), and `convco` (Conventional Commits, e.g. `feat: add x`, `fix: y`). A commit fails if any of them fail. `nix build` also runs the tests. The tests that touch files use temporary directories only and remove them afterwards.
-
-### CI and releases
-`.github/workflows/ci.yml` runs on pushes to `main`, tags and pull requests:
-
-| Job | What it does |
-|---|---|
-| `nix` (Linux and macOS) | `nix flake check` (nixfmt, biome, ripsecrets, unit tests with coverage, Home Manager module check), `nix build`, and a smoke test of the binary. |
-| `npm` | `npm ci`, `npm run build`, `npm test` (typecheck, vitest, coverage thresholds), in the dev shell. |
-| `conventional commits` | Pull requests only: `convco check` over the commits of the PR. |
-| `release` | On a tag `vX.Y.Z`: checks the tag equals the `package.json` version, runs `npm pack` and creates a GitHub release with generated notes and the tarball attached. Tags with a suffix such as `v1.2.0-rc.1` become pre-releases. |
-
-Caching: the Nix jobs restore and save the Nix store with [`nix-community/cache-nix-action`](https://github.com/nix-community/cache-nix-action) (one cache per job and OS, keyed on `flake.lock`, `flake.nix`, `nix/` and, for the build, `package-lock.json`, with a prefix fallback and garbage collection above 2 GB), the jobs that run npm (`npm`, `release`) also cache `~/.npm` with `actions/cache`. Every step of every job runs inside the Nix shell (`nix develop --command …`); no tool is taken from the runner image.
-
-To release: bump `version` (`npm version <major|minor|patch> --no-git-tag-version`, plus the version string in `src/server.ts`), update `npmDepsHash` in `nix/package.nix` (it also changes with the lockfile's version), commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release job only runs after the `nix` and `npm` jobs succeed.
+The flake provides the package, an overlay and a Home Manager module. See [docs/nix.md](docs/nix.md) for the outputs, the module options, wiring it into an MCP client and the vdirsyncer setup.
