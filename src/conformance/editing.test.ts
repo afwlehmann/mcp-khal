@@ -354,7 +354,7 @@ describe("times are taken in the host zone and written in the form of the event"
 
 describe("splitting a series", () => {
   const split = (lines: readonly string[], date: string, p: Partial<UpdateParams> = { summary: "Later" }) =>
-    unwrap(splitSeries(lines, { ...base, scope: "from_date", date, ...p }, "n@mcp-khal", NOW, ENV));
+    unwrap(splitSeries(lines, { ...base, scope: "from_date", date, ...p }, "n", NOW, ENV));
 
   itReq(
     ["RFC5545:3.8.7.4:sequence-initial-zero", "RFC5545:3.8.7.4:sequence-created-zero"],
@@ -363,7 +363,7 @@ describe("splitting a series", () => {
       const lines = zoned(["SEQUENCE:7"]);
       const { created } = split(lines, "2026-12-04");
       expect(prop(master(created), "SEQUENCE")?.value).toBe("0");
-      expect(prop(master(created), "UID")?.value).toBe("n@mcp-khal");
+      expect(prop(master(created), "UID")?.value).toBe("n");
     },
   );
 

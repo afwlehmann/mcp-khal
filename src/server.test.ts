@@ -144,8 +144,8 @@ describe("MCP server (in process)", () => {
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toMatch(/WARNING/);
     const files = await readdir(join(dir, "home"));
-    expect(files).toEqual(["fixed-uid@mcp-khal.ics"]);
-    const ics = unfold(await readFile(join(dir, "home", "fixed-uid@mcp-khal.ics"), "utf8"));
+    expect(files).toEqual(["fixed-uid.ics"]);
+    const ics = unfold(await readFile(join(dir, "home", "fixed-uid.ics"), "utf8"));
     expect(ics).toMatch(/ORGANIZER:mailto:me@x\.com/);
     expect(ics).toMatch(/DTSTART;TZID=Europe\/Berlin:20261104T100000/);
     expect(ics).toMatch(/DTSTAMP:20261102T100000Z/);
@@ -184,7 +184,7 @@ describe("MCP server (in process)", () => {
     expect(await attempt({ attendees: ["a@x.com"], organizer: `${"a".repeat(250)}@x.com` })).toBe(true);
     expect(await attempt({ alarm: "1".repeat(40) })).toBe(true);
     expect(await attempt({ calendar: "h".repeat(300) })).toBe(true);
-    expect(await readdir(join(dir, "home"))).not.toContain("fixed-uid@mcp-khal.ics.tmp");
+    expect(await readdir(join(dir, "home"))).not.toContain("fixed-uid.ics.tmp");
   });
 
   it("rejects a control character in an attendee address as an error result", async () => {

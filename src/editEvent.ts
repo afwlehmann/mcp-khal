@@ -602,7 +602,7 @@ export const updateEvent = (
       return done(`Updated the occurrence on ${iso} of event ${uid} ${where}.`);
     }
 
-    const newId = `${newUid}@mcp-khal`;
+    const newId = newUid;
     const newFile = newFileIn(dirname(stored.file), `${newId}.ics`);
     if (typeof newFile !== "string") return yield* Effect.fail(newFile);
     const split = yield* Effect.fromResult(splitSeries(stored.lines, p, newId, now, env));

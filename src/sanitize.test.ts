@@ -25,7 +25,7 @@ const EVENT = [
 
 describe("names and files", () => {
   it("accepts only plain file names for new files", () => {
-    expect(newFileIn("/v", "abc-1@mcp-khal.ics")).toBe("/v/abc-1@mcp-khal.ics");
+    expect(newFileIn("/v", "abc-1.ics")).toBe("/v/abc-1.ics");
     for (const bad of [
       "",
       "../x.ics",

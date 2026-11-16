@@ -203,7 +203,7 @@ describe("updateInstance", () => {
 
 describe("splitSeries", () => {
   const split = (change: object, lines = series(), date = "2030-10-19", env = ENV) =>
-    splitSeries(lines, { ...base, scope: "from_date", date, ...change }, "new@mcp-khal", NOW, env);
+    splitSeries(lines, { ...base, scope: "from_date", date, ...change }, "new", NOW, env);
 
   it("ends the old series before the day and starts the rest as a new series", () => {
     const { original, created } = unwrap(split({ summary: "Sync" }));
@@ -213,7 +213,7 @@ describe("splitSeries", () => {
     expect(prop(main(original), "SEQUENCE")?.value).toBe("1");
 
     const next = main(created);
-    expect(prop(next, "UID")?.value).toBe("new@mcp-khal");
+    expect(prop(next, "UID")?.value).toBe("new");
     expect(prop(next, "RRULE")?.value).toBe("FREQ=DAILY;COUNT=7");
     expect(prop(next, "SUMMARY")?.value).toBe("Sync");
     expect(prop(next, "SEQUENCE")?.value).toBe("0");
@@ -443,12 +443,12 @@ describe("updateEvent with a scope (occurrences come from the stored file)", () 
         NOW,
       ),
     );
-    expect(out).toMatch(/new series with uid n1@mcp-khal\./);
-    expect((await readdir(vdir)).sort()).toEqual(["n1@mcp-khal.ics", "s1.ics"]);
+    expect(out).toMatch(/new series with uid n1\./);
+    expect((await readdir(vdir)).sort()).toEqual(["n1.ics", "s1.ics"]);
     expect(prop(main(await stored("s1.ics")), "RRULE")?.value).toBe("FREQ=DAILY;UNTIL=20301018T070000Z");
-    const created = await stored("n1@mcp-khal.ics");
+    const created = await stored("n1.ics");
     expect(prop(main(created), "RRULE")?.value).toBe("FREQ=DAILY;COUNT=7");
-    expect(prop(main(created), "UID")?.value).toBe("n1@mcp-khal");
+    expect(prop(main(created), "UID")?.value).toBe("n1");
     expect(props(main(created), "UID")).toHaveLength(1);
   });
 
@@ -462,7 +462,7 @@ describe("updateEvent with a scope (occurrences come from the stored file)", () 
         NOW,
       ),
     );
-    expect(prop(main(await stored("n1@mcp-khal.ics")), "RRULE")?.value).toBe("FREQ=DAILY");
+    expect(prop(main(await stored("n1.ics")), "RRULE")?.value).toBe("FREQ=DAILY");
   });
 
   it("refuses a day that is no occurrence and changes nothing", async () => {

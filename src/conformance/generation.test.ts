@@ -1046,7 +1046,7 @@ describe("the file new_event stores", () => {
   const BASE = { calendar: "work", start: "2030-01-15T12:00", end: "2030-01-15T13:00", summary: "Lunch" };
   const stored = async (over: Partial<NewEventInput> = {}, id = uuid()) => {
     await runOk(newEvent(settings, { ...BASE, ...over }, id, NOW));
-    const file = `${id}@mcp-khal.ics`;
+    const file = `${id}.ics`;
     const ics = await sb.read(`calendars/${over.calendar ?? "work"}/${file}`);
     if (ics === undefined) throw new Error(`${file} was not written`);
     return { id, file, ics };
@@ -1079,7 +1079,7 @@ describe("the file new_event stores", () => {
         expect(propsOf(cal, "METHOD")).toEqual([]);
         expect(allProps(cal).some((p) => p.name === "METHOD")).toBe(false);
         expect(named(cal, "VEVENT")).toHaveLength(1);
-        expect(one(event(ics), "UID").value).toBe(`${id}@mcp-khal`);
+        expect(one(event(ics), "UID").value).toBe(`${id}`);
         expect(propsOf(cal, "VERSION").map((p) => p.value)).toEqual(["2.0"]);
         expect(propsOf(cal, "PRODID")).toHaveLength(1);
         expect(ics.charCodeAt(0)).not.toBe(0xfeff);
@@ -1155,9 +1155,9 @@ describe("the file new_event stores", () => {
       const uidA = one(event(a.ics), "UID").value;
       const uidB = one(event(b.ics), "UID").value;
       expect(uidA).not.toBe(uidB);
-      expect(uidA).toBe(`${a.id}@mcp-khal`);
+      expect(uidA).toBe(`${a.id}`);
       for (const uid of [uidA, uidB]) {
-        expect(uid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}@mcp-khal$/);
+        expect(uid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
         expect(uid).not.toContain(".");
         const host = hostname().toLowerCase();
         if (/[^0-9a-f.-]/.test(host)) expect(uid.split("@")[0]).not.toContain(host);
@@ -1177,7 +1177,7 @@ describe("the file new_event stores", () => {
     async () => {
       const before = await dirOf("work");
       const { id, file } = await stored();
-      expect(file).toBe(`${id}@mcp-khal.ics`);
+      expect(file).toBe(`${id}.ics`);
       expect(file).toMatch(/^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.ics$/);
       expect(file).not.toMatch(/\.\.|\//);
       expect((await dirOf("work")).filter((n) => !before.includes(n))).toEqual([file]);
@@ -1234,7 +1234,7 @@ describe("the file new_event stores", () => {
         "VERSION:2.0",
         "PRODID:-//x//EN",
         "BEGIN:VEVENT",
-        `UID:${id}@mcp-khal`,
+        `UID:${id}`,
         "DTSTAMP:20260101T000000Z",
         "DTSTART;VALUE=DATE:20260101",
         "SUMMARY:Imported",

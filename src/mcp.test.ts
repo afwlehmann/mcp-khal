@@ -231,7 +231,7 @@ describe("the server process works on the calendars' folders", () => {
   });
 
   it("update_event refuses an unknown event", async () => {
-    const r = await server.call("update_event", { calendar: "work", uid: "nope@mcp-khal", summary: "x" });
+    const r = await server.call("update_event", { calendar: "work", uid: "nope", summary: "x" });
     expect(r.isError).toBe(true);
   });
 

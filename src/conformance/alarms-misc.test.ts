@@ -219,6 +219,47 @@ describe("RANGE of a RECURRENCE-ID", () => {
       }
     },
   );
+
+  itReq(
+    "RFC5545:3.8.4.4:range-instances-by-recurrence-id",
+    "an instance shifted by THISANDFUTURE is still addressed by its original RECURRENCE-ID: one entry, not a duplicate or a drop",
+    () => {
+      const lines = cal(
+        ev(
+          "UID:u",
+          "DTSTAMP:20261114T100000Z",
+          "SUMMARY:Daily",
+          "DTSTART:20261102T100000Z",
+          "DTEND:20261102T110000Z",
+          "RRULE:FREQ=DAILY;COUNT=5",
+        ),
+        ev(
+          "UID:u",
+          "DTSTAMP:20261114T100000Z",
+          "SUMMARY:Later",
+          "RECURRENCE-ID;RANGE=THISANDFUTURE:20261104T100000Z",
+          "DTSTART:20261104T120000Z",
+          "DTEND:20261104T130000Z",
+        ),
+        ev(
+          "UID:u",
+          "DTSTAMP:20261114T100000Z",
+          "SUMMARY:Single",
+          "RECURRENCE-ID:20261105T100000Z",
+          "DTSTART:20261105T140000Z",
+          "DTEND:20261105T150000Z",
+        ),
+      );
+      // the slot of 5 November is matched by its RECURRENCE-ID (10:00), not by its shifted start (12:00)
+      expect(starts(lines)).toEqual([
+        "2026-11-02T10:00:00Z",
+        "2026-11-03T10:00:00Z",
+        "2026-11-04T12:00:00Z",
+        "2026-11-05T14:00:00Z",
+        "2026-11-06T12:00:00Z",
+      ]);
+    },
+  );
 });
 
 // ---------- integers ----------

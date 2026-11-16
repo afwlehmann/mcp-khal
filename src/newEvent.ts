@@ -73,7 +73,7 @@ const create = (
   return Effect.gen(function* () {
     const dir = vdirOf(settings, calendar);
     if (typeof dir !== "string") return yield* Effect.fail(dir);
-    const fullUid = `${uid}@mcp-khal`;
+    const fullUid = uid;
     const file = newFileIn(dir, `${fullUid}.ics`);
     if (typeof file !== "string") return yield* Effect.fail(file);
     const times = yield* Effect.fromResult(

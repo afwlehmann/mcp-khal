@@ -9,7 +9,7 @@ import { removeDir, runFail, runOk, tempDir, testSettings, unfold } from "./test
 
 const NOW = new Date("2026-11-02T10:00:00.123Z");
 const UID = "fixed-uid";
-const FILE = `${UID}@mcp-khal.ics`;
+const FILE = `${UID}.ics`;
 
 describe("timestamp", () => {
   it("formats an ICS DTSTAMP", () => {
@@ -68,9 +68,9 @@ describe("newEvent", () => {
   };
 
   describe("the file", () => {
-    it("writes <uid>@mcp-khal.ics into the vdir of the calendar and names the uid", async () => {
+    it("writes <uid>.ics into the vdir of the calendar and names the uid", async () => {
       const out = await runOk(newEvent(settings(), plain, UID, NOW));
-      expect(out).toBe("Created event 'Lunch' (uid fixed-uid@mcp-khal) in calendar 'work'.");
+      expect(out).toBe("Created event 'Lunch' (uid fixed-uid) in calendar 'work'.");
       expect(await files()).toEqual([FILE]);
       expect(await files(other)).toEqual([]);
     });
@@ -81,7 +81,7 @@ describe("newEvent", () => {
       expect(ics).toMatch(
         /^BEGIN:VCALENDAR\r\nVERSION:2\.0\r\nPRODID:-\/\/mcp-khal\/\/EN\r\nBEGIN:VTIMEZONE\r\nTZID:Europe\/Berlin\r\n/,
       );
-      expect(ics).toMatch(/\r\nUID:fixed-uid@mcp-khal\r\n/);
+      expect(ics).toMatch(/\r\nUID:fixed-uid\r\n/);
       expect(ics).toMatch(/\r\nDTSTAMP:20261102T100000Z\r\n/);
       expect(ics).toMatch(/\r\nDTSTART;TZID=Europe\/Berlin:20300115T120000\r\n/);
       expect(ics).toMatch(/\r\nDTEND;TZID=Europe\/Berlin:20300115T130000\r\n/);
@@ -170,7 +170,7 @@ describe("newEvent", () => {
         "VERSION:2.0",
         "PRODID:-//x//EN",
         "BEGIN:VEVENT",
-        `UID:${UID}@mcp-khal`,
+        `UID:${UID}`,
         "DTSTAMP:20260101T000000Z",
         "DTSTART;VALUE=DATE:20260101",
         "SUMMARY:Imported",
@@ -187,7 +187,7 @@ describe("newEvent", () => {
     });
 
     it("ignores unrelated and unreadable files when it checks the uid", async () => {
-      await writeFile(join(dir, "notes.txt"), "UID:fixed-uid@mcp-khal");
+      await writeFile(join(dir, "notes.txt"), "UID:fixed-uid");
       await mkdir(join(dir, "folder.ics"));
       await runOk(newEvent(settings(), plain, UID, NOW));
       expect((await files()).sort()).toEqual(["folder.ics", FILE, "notes.txt"].sort());

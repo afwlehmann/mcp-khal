@@ -149,7 +149,7 @@ describe("SEQUENCE belongs to the organizer", () => {
         splitSeries(
           mine,
           { ...base, scope: "from_date", date: "2026-11-28", summary: "Later" },
-          "n@mcp-khal",
+          "n",
           NOW,
           ENV,
         ),
@@ -189,7 +189,7 @@ describe("SEQUENCE belongs to the organizer", () => {
       const split = splitSeries(
         weekly(),
         { ...base, scope: "from_date", date: "2026-11-28", summary: "x" },
-        "n@mcp-khal",
+        "n",
         NOW,
         ENV,
       );

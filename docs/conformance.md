@@ -3,7 +3,7 @@
 Generated from `spec/*.json` and the tests that cite a requirement id (`itReq`). Do not edit by hand:
 `UPDATE_CONFORMANCE=1 npx vitest run src/conformance.meta.test.ts` rewrites it.
 
-Required requirements with a test: **319 of 319**.
+Required requirements with a test: **321 of 321**.
 
 ## rfc5545.json
 
@@ -274,7 +274,7 @@ Required requirements with a test: **319 of 319**.
 | [`RFC5545:3.2.12:partstat-unknown-token`](https://www.rfc-editor.org/rfc/rfc5545#section-3.2.12) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC5545:3.8.4.4:recurrence-id-same-value-type`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4) | MUST | required | `src/conformance/editing.test.ts` |
 | [`RFC5545:3.8.4.4:recurrence-id-floating-iff`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4) | MUST | required | `src/conformance/editing.test.ts` |
-| [`RFC5545:3.8.4.4:range-instances-by-recurrence-id`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4) | policy | deferred: Goes with deferred RANGE=THISANDFUTURE expansion. |  |
+| [`RFC5545:3.8.4.4:range-instances-by-recurrence-id`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4) | policy | required | `src/conformance/alarms-misc.test.ts` |
 | [`RFC5545:3.8.4.4:truncate-with-until`](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4) | MAY | required | `src/conformance/editing.test.ts` |
 | [`RFC5545:3.3.10:until-same-value-type`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.10) | MUST | required | `src/conformance/editing.test.ts` |
 | [`RFC5545:3.3.10:until-floating-dtstart`](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.10) | MUST | required | `src/conformance/editing.test.ts` |
@@ -326,7 +326,7 @@ Required requirements with a test: **319 of 319**.
 | [`RFC7986:5.1:name-vcalendar-level`](https://www.rfc-editor.org/rfc/rfc7986#section-5.1) | MAY | required | `src/conformance/scheduling.test.ts`, `src/conformance/syntax.test.ts` |
 | [`RFC7986:5.1:name-one-per-language`](https://www.rfc-editor.org/rfc/rfc7986#section-5.1) | MUST | required | `src/conformance/syntax.test.ts` |
 | [`RFC7986:5.3:uid-no-identifying-data`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | MUST NOT | required | `src/conformance/generation.test.ts` |
-| [`RFC7986:5.3:uid-uuid-recommended`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | SHOULD | deferred: The UID is a random UUID v4 (randomUUID at the process edge) followed by the fixed suffix @mcp-khal, which split-off series also use; the value is therefore not a bare UUID. Dropping the suffix is a separate decision. |  |
+| [`RFC7986:5.3:uid-uuid-recommended`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | SHOULD | required | `src/conformance/uid.test.ts` |
 | [`RFC7986:5.3:uid-opaque-length`](https://www.rfc-editor.org/rfc/rfc7986#section-5.3) | MUST | required | `src/conformance/generation.test.ts` |
 | [`RFC7986:5.9:color-once`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MAY | n/a: No tool sets a colour: the server never writes COLOR and leaves an existing COLOR line untouched. |  |
 | [`RFC7986:5.9:color-css3-name`](https://www.rfc-editor.org/rfc/rfc7986#section-5.9) | MUST | n/a: The server never generates COLOR and does not interpret colour names, so there is no value to validate; an existing COLOR is preserved verbatim. |  |

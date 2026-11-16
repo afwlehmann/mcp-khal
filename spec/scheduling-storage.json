@@ -505,8 +505,7 @@
     "scope": ["expand"],
     "matrixRef": "C4",
     "test": "An instance rescheduled by an override keeps matching its original RECURRENCE-ID slot, so it is neither duplicated nor dropped by a THISANDFUTURE range.",
-    "status": "deferred",
-    "reason": "Goes with deferred RANGE=THISANDFUTURE expansion."
+    "status": "required"
   },
   {
     "id": "RFC5545:3.8.4.4:truncate-with-until",
@@ -1183,8 +1182,7 @@
     "scope": ["generate"],
     "matrixRef": "V4",
     "test": "new_event UID matches ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ (random from an injected source, not read inside the function).",
-    "status": "deferred",
-    "reason": "The UID is a random UUID v4 (randomUUID at the process edge) followed by the fixed suffix @mcp-khal, which split-off series also use; the value is therefore not a bare UUID. Dropping the suffix is a separate decision."
+    "status": "required"
   },
   {
     "id": "RFC7986:5.3:uid-opaque-length",
