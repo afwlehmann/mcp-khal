@@ -3,6 +3,7 @@ import { Effect, Result } from "effect";
 import {
   type CalendarConfig,
   type Calendars,
+  calendarNameProblem,
   interpretAnswer,
   interpretPath,
   isEmail,
@@ -89,9 +90,8 @@ export const interpretName = (
 ): Result.Result<string | undefined, string> => {
   const name = answer.trim();
   if (name === "") return Result.succeed(undefined);
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(name))
-    return Result.fail("a calendar name must not contain control characters");
+  const bad = calendarNameProblem(name);
+  if (bad !== undefined) return Result.fail(`a calendar name ${bad}`);
   return existing.includes(name) ? Result.fail(`'${name}' is already configured`) : Result.succeed(name);
 };
 

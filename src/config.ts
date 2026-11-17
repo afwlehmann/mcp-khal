@@ -59,6 +59,22 @@ const ALARM_HINT = "a reminder like 30m, 2h or 1d (minutes, hours, days before t
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
+/** Longest calendar name or uid accepted. */
+export const MAX_NAME = 255;
+
+/** control characters (C0, DEL, C1) and line/paragraph separators */
+const NAME_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
+/** The one rule for a (trimmed) calendar name, shared by config, setup and vdir; `undefined` when it is fine. */
+export const calendarNameProblem = (name: string): string | undefined =>
+  name === ""
+    ? "must not be empty"
+    : name.length > MAX_NAME
+      ? `must not be longer than ${MAX_NAME} characters`
+      : NAME_CONTROL.test(name)
+        ? "must not contain control characters"
+        : undefined;
+
 /** An environment variable counts as unset when it is empty or only whitespace. */
 const envValue = (env: Env, name: string): string | undefined => {
   const v = env[name]?.trim();
@@ -187,7 +203,11 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const checkCalendarName = (name: string, where: string): Validated<string> => {
   const n = name.trim();
   if (n === "") return problem(`${where} has an empty calendar name`);
-  if (CONTROL.test(n))
+  if (n.length > MAX_NAME)
+    return problem(
+      `${where} has a calendar name longer than ${MAX_NAME} characters (${n.length}): ${JSON.stringify(`${n.slice(0, 20)}...`)}`,
+    );
+  if (calendarNameProblem(n) !== undefined)
     return problem(`${where} has a calendar name with control characters: ${JSON.stringify(n)}`);
   return valid(n);
 };

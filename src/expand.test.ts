@@ -737,6 +737,103 @@ describe("dates in the host zone", () => {
   });
 });
 
+describe("invalid dates of MONTHLY and YEARLY rules are skipped", () => {
+  it("YEARLY from 29 February only yields leap days, and COUNT counts valid instances", () => {
+    const l = ics(...vevent("DTSTART:20240229T100000Z", "RRULE:FREQ=YEARLY;COUNT=3"));
+    expect(occ(l)).toEqual([
+      "2024-02-29T10:00/2024-02-29T11:00",
+      "2028-02-29T10:00/2028-02-29T11:00",
+      "2032-02-29T10:00/2032-02-29T11:00",
+    ]);
+  });
+
+  it("MONTHLY on the 31st skips short months", () => {
+    const l = ics(...vevent("DTSTART:20260131T100000Z", "RRULE:FREQ=MONTHLY;COUNT=4"));
+    expect(occ(l)).toEqual([
+      "2026-01-31T10:00/2026-01-31T11:00",
+      "2026-03-31T10:00/2026-03-31T11:00",
+      "2026-05-31T10:00/2026-05-31T11:00",
+      "2026-07-31T10:00/2026-07-31T11:00",
+    ]);
+  });
+
+  it("applies to all-day events and to an interval", () => {
+    const l = ics(...vevent("DTSTART;VALUE=DATE:20240229", "RRULE:FREQ=YEARLY;INTERVAL=2;COUNT=2"));
+    expect(dates(l, "2024-01-01", "2040-01-01", "UTC")).toEqual(["2024-02-29", "2028-02-29"]);
+  });
+
+  it("steps by INTERVAL months and honours UNTIL", () => {
+    const l = ics(
+      ...vevent("DTSTART:20260131T100000Z", "RRULE:FREQ=MONTHLY;INTERVAL=12;UNTIL=20300101T000000Z"),
+    );
+    expect(occ(l)).toEqual([
+      "2026-01-31T10:00/2026-01-31T11:00",
+      "2027-01-31T10:00/2027-01-31T11:00",
+      "2028-01-31T10:00/2028-01-31T11:00",
+      "2029-01-31T10:00/2029-01-31T11:00",
+    ]);
+  });
+});
+
+describe("THISANDFUTURE moving instances earlier", () => {
+  it("finds a shifted instance in a window that ends before the original one", () => {
+    const l = ics(
+      ...vevent("DTSTART:20260303T090000Z", "RRULE:FREQ=WEEKLY;COUNT=4"),
+      ...vevent("RECURRENCE-ID;RANGE=THISANDFUTURE:20260310T090000Z", "DTSTART:20260309T090000Z"),
+    );
+    expect(occ(l, "2026-03-16T00:00:00Z", "2026-03-16T12:00:00Z")).toEqual([
+      "2026-03-16T09:00/2026-03-16T10:00",
+    ]);
+    expect(occ(l)).toHaveLength(4);
+  });
+
+  it("shifts all-day instances after a THISANDFUTURE exception", () => {
+    const l = ics(
+      ...vevent("DTSTART;VALUE=DATE:20260301", "RRULE:FREQ=DAILY;COUNT=3"),
+      ...vevent(
+        "RECURRENCE-ID;RANGE=THISANDFUTURE;VALUE=DATE:20260302",
+        "DTSTART;VALUE=DATE:20260303",
+        "DTEND;VALUE=DATE:20260304",
+      ),
+    );
+    expect(occ(l, FAR_FROM, FAR_TO, "UTC")).toEqual([
+      "2026-03-01T00:00/2026-03-02T00:00 A",
+      "2026-03-03T00:00/2026-03-04T00:00 A",
+      "2026-03-04T00:00/2026-03-05T00:00 A",
+    ]);
+  });
+});
+
+describe("sub-daily rules step in exact time", () => {
+  it("HOURLY skips the gap hour of the spring change", () => {
+    const l = ics(...vevent("DTSTART;TZID=Europe/Berlin:20260329T000000", "RRULE:FREQ=HOURLY;COUNT=5"));
+    expect(occ(l)).toEqual([
+      "2026-03-28T23:00/2026-03-29T00:00",
+      "2026-03-29T00:00/2026-03-29T01:00",
+      "2026-03-29T01:00/2026-03-29T02:00",
+      "2026-03-29T02:00/2026-03-29T03:00",
+      "2026-03-29T03:00/2026-03-29T04:00",
+    ]);
+  });
+
+  it("HOURLY produces the repeated hour of the autumn change twice", () => {
+    const l = ics(...vevent("DTSTART;TZID=Europe/Berlin:20261025T010000", "RRULE:FREQ=HOURLY;COUNT=4"));
+    expect(occ(l)).toEqual([
+      "2026-10-24T23:00/2026-10-25T00:00",
+      "2026-10-25T00:00/2026-10-25T01:00",
+      "2026-10-25T01:00/2026-10-25T02:00",
+      "2026-10-25T02:00/2026-10-25T03:00",
+    ]);
+  });
+
+  it("honours INTERVAL and UNTIL", () => {
+    const l = ics(
+      ...vevent("DTSTART:20260310T090000Z", "RRULE:FREQ=MINUTELY;INTERVAL=30;UNTIL=20260310T100000Z"),
+    );
+    expect(occ(l)).toHaveLength(3);
+  });
+});
+
 describe("infinite rules", () => {
   it("are bounded by the window", () => {
     const l = ics(...vevent("DTSTART:20260101T100000Z", "RRULE:FREQ=DAILY"));

@@ -133,6 +133,7 @@ export const respondToEvent = (
     yield* writeEvent(
       stored.file,
       yield* Effect.fromResult(respondLines(stored.lines, p, address, now, settings.timezone)),
+      stored.etag,
     );
     const what = scope === "instance" && date !== undefined ? `the occurrence on ${isoOf(date)} of ` : "";
     return `Marked ${address} as ${p.response} for ${what}event ${uid} in calendar ${p.calendar.trim()}. No reply was sent to the organizer.\n`;

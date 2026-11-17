@@ -104,6 +104,6 @@ export const endSeries = (settings: Settings, p: EndParams, now: Date): Effect.E
     const uid = p.uid.trim();
     const iso = isoOf(compactDate(p.lastDate) ?? "");
     yield* Effect.fromResult(requireOccurrence(stored.lines, uid, iso, env.hostZone));
-    yield* writeEvent(stored.file, lines);
+    yield* writeEvent(stored.file, lines, stored.etag);
     return `Ended event ${uid} in calendar ${p.calendar.trim()}: its last occurrence is on ${iso}.\n`;
   });

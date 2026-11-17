@@ -116,8 +116,22 @@ export interface Param {
   readonly values: readonly string[];
 }
 
-/** Commas that are not inside a quoted-string. */
-const VALUE_COMMA = /,(?=(?:[^"]*"[^"]*")*[^"]*$)/;
+/** Splits at commas outside quoted-strings (linear scan). */
+const splitValues = (s: string): string[] => {
+  const out: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"') quoted = !quoted;
+    else if (c === "," && !quoted) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
+};
 
 /** All parameters of a property (the text between name and colon), in order. */
 export const paramsOf = (params: string): Param[] =>
@@ -128,10 +142,9 @@ export const paramsOf = (params: string): Param[] =>
       : [
           {
             name: segment.slice(0, eq).toUpperCase(),
-            values: segment
-              .slice(eq + 1)
-              .split(VALUE_COMMA)
-              .map((v) => decodeParamValue(v.replace(/^"([\s\S]*)"$/, "$1"))),
+            values: splitValues(segment.slice(eq + 1)).map((v) =>
+              decodeParamValue(v.replace(/^"([\s\S]*)"$/, "$1")),
+            ),
           },
         ];
   });
@@ -463,8 +476,13 @@ export const setProp = (event: Event, name: string, line: string | undefined): E
   const own = ownIndexes(event);
   const hits = own.filter((i) => parseProp(event[i] ?? "").name === name);
   const [first] = hits;
-  if (first === undefined)
-    return line === undefined ? event : [...event.slice(0, -1), line, ...event.slice(-1)];
+  if (first === undefined) {
+    if (line === undefined) return event;
+    // RFC 5545 eventc: properties come before nested components (VALARM)
+    const nested = event.findIndex((l, i) => i > 0 && /^BEGIN:/i.test(l));
+    const at = nested < 0 ? event.length - 1 : nested;
+    return [...event.slice(0, at), line, ...event.slice(at)];
+  }
   return event.flatMap((l, i) =>
     i === first ? (line === undefined ? [] : [line]) : hits.includes(i) ? [] : [l],
   );

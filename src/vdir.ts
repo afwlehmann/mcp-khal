@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
-import { link, open, readdir, rename, rm, stat } from "node:fs/promises";
+import { link, open, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Effect, Result } from "effect";
-import { calendarOf } from "./config.js";
+import { calendarNameProblem, calendarOf, MAX_NAME } from "./config.js";
 import { type AppError, InvalidInput, ioError } from "./errors.js";
 import {
   classifyFile,
@@ -33,8 +33,7 @@ const CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u;
 
 const invalid = (message: string): InvalidInput => new InvalidInput({ message });
 
-/** Longest calendar name or uid accepted. */
-export const MAX_NAME = 255;
+export { MAX_NAME };
 
 /** Files bigger than this are not events: they are skipped instead of being read into memory. */
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -60,7 +59,7 @@ export const newFileIn = (dir: string, name: string): string | InvalidInput =>
 /** The vdir of a calendar, or why there is none. */
 export const vdirOf = (settings: Settings, calendar: string): string | InvalidInput => {
   const name = calendar.trim();
-  if (name === "" || name.length > MAX_NAME || CONTROL.test(name))
+  if (calendarNameProblem(name) !== undefined)
     return invalid(
       `calendar must be a calendar name (at most ${MAX_NAME} characters, no control characters)`,
     );
@@ -353,20 +352,26 @@ export const writeEvent = (
   const bad = malformed(out);
   if (bad !== undefined) return Effect.fail(bad);
   const content = serialize(out);
-  return Effect.sync(() => tempName(file)).pipe(
-    Effect.flatMap((tmp) =>
-      Effect.tryPromise({
-        try: async (): Promise<Verdict> => {
-          const before = await attempt(stat(file));
-          await writeTemp(tmp, content, before.ok ? before.value.mode & 0o7777 : DEFAULT_MODE);
-          const verdict = await verify(file, out, etag);
-          if (verdict.kind !== "ok") return verdict;
-          await rename(tmp, file);
-          await syncDir(dirname(file));
-          return verdict;
-        },
-        catch: ioError,
-      }).pipe(Effect.ensuring(Effect.promise(() => rm(tmp, { force: true })))),
+  // a symlinked event file is updated where it points to; renaming over the link would replace it
+  return Effect.promise(() => attempt(realpath(file))).pipe(
+    Effect.map((r) => (r.ok ? r.value : file)),
+    Effect.flatMap((target) =>
+      Effect.sync(() => tempName(target)).pipe(
+        Effect.flatMap((tmp) =>
+          Effect.tryPromise({
+            try: async (): Promise<Verdict> => {
+              const before = await attempt(stat(target));
+              await writeTemp(tmp, content, before.ok ? before.value.mode & 0o7777 : DEFAULT_MODE);
+              const verdict = await verify(target, out, etag);
+              if (verdict.kind !== "ok") return verdict;
+              await rename(tmp, target);
+              await syncDir(dirname(target));
+              return verdict;
+            },
+            catch: ioError,
+          }).pipe(Effect.ensuring(Effect.promise(() => rm(tmp, { force: true })))),
+        ),
+      ),
     ),
     Effect.flatMap((verdict) =>
       verdict.kind === "ok"

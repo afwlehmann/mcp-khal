@@ -589,7 +589,11 @@ export const updateEvent = (
       `${what}${warning === undefined ? "" : `\n${warning}`}${note === undefined ? "" : `\n${note}`}\n`;
 
     if (scope === "all" || date === undefined) {
-      yield* writeEvent(stored.file, yield* Effect.fromResult(updateLines(stored.lines, p, now, env)));
+      yield* writeEvent(
+        stored.file,
+        yield* Effect.fromResult(updateLines(stored.lines, p, now, env)),
+        stored.etag,
+      );
       return done(`Updated event ${uid} ${where}.`);
     }
 
@@ -598,7 +602,11 @@ export const updateEvent = (
     yield* Effect.fromResult(requireOccurrence(stored.lines, uid, iso, env.hostZone));
 
     if (scope === "instance") {
-      yield* writeEvent(stored.file, yield* Effect.fromResult(updateInstance(stored.lines, p, now, env)));
+      yield* writeEvent(
+        stored.file,
+        yield* Effect.fromResult(updateInstance(stored.lines, p, now, env)),
+        stored.etag,
+      );
       return done(`Updated the occurrence on ${iso} of event ${uid} ${where}.`);
     }
 
@@ -608,7 +616,7 @@ export const updateEvent = (
     const split = yield* Effect.fromResult(splitSeries(stored.lines, p, newId, now, env));
     // the new series first: a failure in between leaves a duplicate, never a lost event
     yield* createEvent(newFile, split.created);
-    yield* writeEvent(stored.file, split.original);
+    yield* writeEvent(stored.file, split.original, stored.etag);
     return done(
       `Updated event ${uid} ${where} from ${iso} on: the old series now ends before that day, the following events are a new series with uid ${newId}.`,
     );

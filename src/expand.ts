@@ -599,6 +599,32 @@ const untilOf = (ev: Ev, raw: unknown): V<PastUntil | undefined> => {
   });
 };
 
+/** One step of a rule walk: the wall clock, and the exact instant when the rule steps in exact time. */
+interface Step {
+  readonly wall: Wall;
+  readonly ms: number | undefined;
+}
+
+/**
+ * Walls of a MONTHLY or YEARLY rule without BYxxx parts: DTSTART's day every INTERVAL months or
+ * years; dates that do not exist are skipped (RFC 5545 3.3.10).
+ */
+const calendarWalls = (freq: string, start: Wall, interval: number, allDay: boolean): (() => Wall | null) => {
+  const time = allDay ? { hour: 0, minute: 0, second: 0 } : start;
+  let n = 0;
+  return () => {
+    for (;;) {
+      const months = start.year * 12 + (start.month - 1) + n++ * interval * (freq === "YEARLY" ? 12 : 1);
+      const year = Math.floor(months / 12);
+      const month = (months % 12) + 1;
+      if (year > 9999) return null;
+      if (isRealDate(year, month, start.day)) {
+        return { year, month, day: start.day, hour: time.hour, minute: time.minute, second: time.second };
+      }
+    }
+  };
+};
+
 /** What a rule walk has used so far (shared by all rules of one event). */
 interface Budget {
   walked: number;
@@ -639,8 +665,37 @@ const walkRule = (
     if (weekNos !== undefined && (parts.BYYEARDAY || parts.BYMONTHDAY || parts.BYSETPOS)) {
       return yield* fail("BYWEEKNO together with BYYEARDAY, BYMONTHDAY or BYSETPOS is not supported");
     }
-    const source = yield* attempt((): (() => Wall | null) => {
-      if (weekNos !== undefined) return weekNoWalls(recur, ev.startWall, weekNos);
+    const interval = typeof recur.interval === "number" && recur.interval > 0 ? recur.interval : 1;
+    const freq = String(recur.freq);
+    const noBy = Object.keys(parts).length === 0;
+    const source = yield* attempt((): (() => Step | null) => {
+      if (weekNos !== undefined) {
+        const next = weekNoWalls(recur, ev.startWall, weekNos);
+        return () => {
+          const wall = next();
+          return wall === null ? null : { wall, ms: undefined };
+        };
+      }
+      // RFC 5545 3.3.10: rules finer than DAILY step in exact time (a gap hour is skipped, a
+      // repeated hour occurs twice). Only without BYxxx parts; with them the walk stays on the wall
+      // clock (limitation: BYxxx expansion and filters of a sub-daily rule across a DST change).
+      if (subDaily && !ev.allDay && noBy) {
+        const unit = freq === "HOURLY" ? 3_600_000 : freq === "MINUTELY" ? 60_000 : 1000;
+        let n = 0;
+        return () => {
+          const ms = ev.startMs + n++ * interval * unit;
+          return { wall: instantToWall(ev.zone, ms), ms };
+        };
+      }
+      // RFC 5545 3.3.10: an invalid date (29 February of a common year, the 31st of a short month)
+      // is skipped, not rolled over (ical.js rolls over and then drifts)
+      if ((freq === "YEARLY" || freq === "MONTHLY") && noBy && ev.startWall.day > 28) {
+        const next = calendarWalls(freq, ev.startWall, interval, ev.allDay);
+        return () => {
+          const wall = next();
+          return wall === null ? null : { wall, ms: undefined };
+        };
+      }
       recur.until = null;
       recur.count = null;
       if (ev.allDay) {
@@ -652,12 +707,15 @@ const walkRule = (
         const next = it.next();
         if (next === null || next === undefined) return null;
         return {
-          year: next.year,
-          month: next.month,
-          day: next.day,
-          hour: ev.allDay ? 0 : next.hour,
-          minute: ev.allDay ? 0 : next.minute,
-          second: ev.allDay ? 0 : next.second,
+          wall: {
+            year: next.year,
+            month: next.month,
+            day: next.day,
+            hour: ev.allDay ? 0 : next.hour,
+            minute: ev.allDay ? 0 : next.minute,
+            second: ev.allDay ? 0 : next.second,
+          },
+          ms: undefined,
         };
       };
     }, "the recurrence rule is not valid");
@@ -667,7 +725,8 @@ const walkRule = (
     let produced = 0;
     let first = true;
     for (;;) {
-      const wall = yield* attempt(source, "the recurrence rule cannot be expanded");
+      const step = yield* attempt(source, "the recurrence rule cannot be expanded");
+      const wall = step === null ? null : step.wall;
       if (wall !== null) {
         if (++budget.walked > MAX_WALKED) return yield* fail("too many occurrences");
         if (yearDays !== undefined && !matchesYearDay(wall, yearDays)) continue;
@@ -675,7 +734,10 @@ const walkRule = (
       if (first) {
         first = false;
         // DTSTART is the first instance even when the rule does not produce it (RFC 5545 3.3.10)
-        if (wall === null || wallToUtcMs(wall) !== startsAt) {
+        if (
+          wall === null ||
+          (step?.ms === undefined ? wallToUtcMs(wall) !== startsAt : step.ms !== ev.startMs)
+        ) {
           produced++;
           if (ev.startMs >= lowMs && ev.startMs < toMs) {
             if (++budget.kept > MAX_OCCURRENCES) return yield* fail("too many occurrences");
@@ -687,7 +749,7 @@ const walkRule = (
       produced++;
       // cheap skip before the window (offsets are far below 2 days); the exact check follows
       if (wallToUtcMs(wall) < lowMs - 2 * DAY_MS) continue;
-      const ms = wallToInstant(zone, wall);
+      const ms = step?.ms ?? wallToInstant(zone, wall);
       if (pastUntil !== undefined && pastUntil(wall, ms)) break;
       if (ms >= toMs) break;
       if (ms < lowMs) continue;
@@ -817,7 +879,7 @@ const futureShift = (o: Override): number =>
 
 /** Moves a later instance by the shift of the THISANDFUTURE exception (on the wall clock of the series) and gives it its duration. */
 const applyFuture = (main: Ev, o: Override, item: Item): Item => {
-  if (main.allDay || item.orig <= o.ridMs) return { ...item, dur: o.ev.dur };
+  if (item.orig <= o.ridMs) return { ...item, dur: o.ev.dur };
   const moved = wallFromUtcMs(wallToUtcMs(instantToWall(main.zone, item.orig)) + futureShift(o));
   return { orig: item.orig, start: wallToInstant(main.zone, moved), dur: o.ev.dur };
 };
@@ -910,7 +972,13 @@ const expandAll = (
       Math.max(spanOf(ev.dur), ...raw.map((o) => spanOf(o.ev.dur))) +
       Math.max(0, ...raw.filter((o) => o.thisAndFuture).map((o) => Math.abs(futureShift(o)))) +
       2 * DAY_MS;
-    const base = yield* mainItems(ctx, main, ev, fromMs - slack, toMs);
+    // a THISANDFUTURE override that moves its instances earlier brings instances that start after
+    // the window on the rule into it: the walk reaches as far further as the largest shift (plus a
+    // day for DST); the final filter on the shifted start drops the others
+    const reach =
+      Math.max(0, ...raw.filter((o) => o.thisAndFuture).map((o) => Math.abs(futureShift(o)))) +
+      (raw.some((o) => o.thisAndFuture) ? DAY_MS : 0);
+    const base = yield* mainItems(ctx, main, ev, fromMs - slack, toMs + reach);
     const overrides = raw;
     const shifted = overrides
       .filter((o) => o.thisAndFuture)
