@@ -411,7 +411,7 @@ describe("creating", () => {
   });
 
   it("reports a hard link failure that is not about missing support", async () => {
-    const denied = () => Promise.reject(Object.assign(new Error("denied"), { code: "EACCES" }));
+    const denied = () => Promise.reject(Object.assign(new Error("denied"), { code: "EIO" }));
     expect((await runFail(createEvent(join(dir, "n.ics"), event("n"), denied)))._tag).toBe("IoError");
     expect(await names()).toEqual([]);
   });

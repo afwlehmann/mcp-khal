@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import { calendarNameProblem, MAX_NAME, parseConfig } from "./config.js";
 import { paramsOf, setProp } from "./ics.js";
 import { interpretName } from "./setup.js";
-import { failure, testSettings } from "./testlib.js";
-import { vdirOf, writeEvent } from "./vdir.js";
+import { failure, runFail, testSettings } from "./testlib.js";
+import { createEvent, vdirOf, writeEvent } from "./vdir.js";
 
 describe("paramsOf on long values", () => {
   it("splits at commas outside quotes", () => {
@@ -123,5 +123,32 @@ describe("one calendar name rule", () => {
 
   it("accepts an ordinary name of the maximum length", () => {
     expect(calendarNameProblem("a".repeat(MAX_NAME))).toBeUndefined();
+  });
+});
+
+describe("writing into a calendar directory that is not writable", () => {
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:x",
+    "BEGIN:VEVENT",
+    "UID:u",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+
+  it.skipIf(isRoot)("fails with a message that names the directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mcp-khal-ro-"));
+    await chmod(dir, 0o555);
+    try {
+      const created = await runFail(createEvent(join(dir, "u.ics"), lines));
+      expect(created.message).toContain(`the calendar directory ${dir} is not writable`);
+      const written = await runFail(writeEvent(join(dir, "u.ics"), lines));
+      expect(written.message).toContain("is not writable");
+    } finally {
+      await chmod(dir, 0o755);
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -11,7 +11,11 @@ const attempt = <A>(
 ): Effect.Effect<Validated<A>> =>
   Effect.match(eff, { onFailure: (e) => problem(describe(e)), onSuccess: (a) => valid(a) });
 
-/** Every configured calendar `path` must be a directory the server can read and write. */
+/**
+ * Every configured calendar `path` must be a directory the server can read; all unreadable ones are
+ * listed together. A directory that cannot be written does not stop the server: the tools that
+ * write fail with a message, the others work.
+ */
 export const checkVdirs = (settings: Settings): Effect.Effect<Validated<readonly unknown[]>> =>
   Effect.map(
     Effect.all(
@@ -22,11 +26,11 @@ export const checkVdirs = (settings: Settings): Effect.Effect<Validated<readonly
             Effect.tryPromise({
               try: async () => {
                 if (!(await stat(c.path)).isDirectory()) throw new Error("not a directory");
-                await access(c.path, constants.R_OK | constants.W_OK);
+                await access(c.path, constants.R_OK);
               },
               catch: (u) => u as AppError,
             }),
-            () => `calendars.${name}.path ${c.path} is not a directory that can be read and written`,
+            () => `calendars.${name}.path ${c.path} is not a directory that can be read`,
           ),
         ),
     ),

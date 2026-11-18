@@ -327,11 +327,19 @@ export const createEvent = (
           }
           await syncDir(dirname(file));
         },
-        catch: ioError,
+        catch: writeError(dirname(file)),
       }).pipe(Effect.ensuring(Effect.promise(() => rm(tmp, { force: true })))),
     ),
   );
 };
+
+/** A failed write: a directory that cannot be written is named as such, nothing else changes. */
+const writeError =
+  (dir: string) =>
+  (u: unknown): AppError =>
+    ["EACCES", "EPERM", "EROFS"].includes(codeOf(u) ?? "")
+      ? invalid(`the calendar directory ${dir} is not writable; nothing was written`)
+      : ioError(u);
 
 /** errno codes of a file system without hard links (FAT, some network and FUSE file systems) */
 const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EMLINK"]);
@@ -368,7 +376,7 @@ export const writeEvent = (
               await syncDir(dirname(target));
               return verdict;
             },
-            catch: ioError,
+            catch: writeError(dirname(target)),
           }).pipe(Effect.ensuring(Effect.promise(() => rm(tmp, { force: true })))),
         ),
       ),

@@ -430,7 +430,7 @@ describe("the server checks its configuration at startup and refuses to start", 
     const r = await startWith("missing-dir.json", { calendars: { work: { path: missing } } });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(
-      `mcp-khal cannot start: InvalidInput: calendars.work.path ${missing} is not a directory that can be read and written`,
+      `mcp-khal cannot start: InvalidInput: calendars.work.path ${missing} is not a directory that can be read`,
     );
   });
 

@@ -16,7 +16,7 @@ describe("preflight", () => {
   });
   afterEach(() => box.cleanup());
 
-  it("passes when every calendar path is a readable and writable directory", async () => {
+  it("passes when every calendar path is a readable directory", async () => {
     const given = await box.settings(["work", "home"], { defaultCalendar: "work" });
     expect(await runOk(preflight(given))).toEqual(given);
   });
@@ -63,7 +63,7 @@ describe("preflight", () => {
   it("names a calendar whose path does not exist", async () => {
     const missing = join(box.dir, "missing");
     const e = await runFail(preflight(testSettings({ calendars: { work: { path: missing } } })));
-    expect(e.message).toBe(`calendars.work.path ${missing} is not a directory that can be read and written`);
+    expect(e.message).toBe(`calendars.work.path ${missing} is not a directory that can be read`);
   });
 
   it("names a calendar whose path is a file, not a directory", async () => {
@@ -73,16 +73,28 @@ describe("preflight", () => {
     expect(e.message).toContain(`calendars.work.path ${file} is not a directory`);
   });
 
-  it.skipIf(isRoot)("names a calendar whose path cannot be written", async () => {
+  it.skipIf(isRoot)("starts with a calendar whose path cannot be written", async () => {
     const path = await box.vdir("ro");
     await chmod(path, 0o555);
     try {
-      const e = await runFail(preflight(testSettings({ calendars: { ro: { path } } })));
-      expect(e.message).toContain(
-        `calendars.ro.path ${path} is not a directory that can be read and written`,
-      );
+      await runOk(preflight(testSettings({ calendars: { ro: { path } } })));
     } finally {
       await chmod(path, 0o755);
+    }
+  });
+
+  it.skipIf(isRoot)("names every calendar whose path cannot be read", async () => {
+    const a = await box.vdir("a");
+    const b = await box.vdir("b");
+    await chmod(a, 0o000);
+    await chmod(b, 0o000);
+    try {
+      const e = await runFail(preflight(testSettings({ calendars: { b: { path: b }, a: { path: a } } })));
+      expect(e.message).toContain(`calendars.a.path ${a} is not a directory that can be read`);
+      expect(e.message).toContain(`calendars.b.path ${b} is not a directory that can be read`);
+    } finally {
+      await chmod(a, 0o755);
+      await chmod(b, 0o755);
     }
   });
 

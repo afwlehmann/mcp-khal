@@ -143,7 +143,7 @@ Each entry of `calendars` has one required and two optional fields and nothing e
 
 | Field | Meaning |
 |---|---|
-| `path` | Required. Absolute path of the calendar's vdir: the directory of its `.ics` files (with vdirsyncer, the `path` of its `filesystem` storage). Not recursive: only the files directly in it are read. Different for every calendar. Checked at startup: a readable and writable directory (read-only tools would work on a read-only one, but the server refuses to start so that a typo is noticed). |
+| `path` | Required. Absolute path of the calendar's vdir: the directory of its `.ics` files (with vdirsyncer, the `path` of its `filesystem` storage). Not recursive: only the files directly in it are read. Different for every calendar. Checked at startup: a readable directory; the server refuses to start otherwise and lists every affected directory. A directory that is not writable is fine: the reading tools work and the tools that write fail with a message. |
 | `email` | Your address on this calendar: the organizer of invites created there, and who answers invitations. Written by `mcp-khal setup`. |
 | `alarm` | Reminder for new events on this calendar; `none` or unset means no reminder. |
 
@@ -192,7 +192,7 @@ First, the values themselves:
 
 Then the values against the machine:
 - `defaultCalendar` is one of the configured calendars, and is set when there are several (with exactly one it is filled in),
-- every calendar `path` is a directory that can be read and written,
+- every calendar `path` is a directory that can be read (one that cannot be written only makes the writing tools fail),
 - a config file named explicitly by `MCP_KHAL_CONFIG` exists (the default location may be missing: that means no calendars).
 
 `mcp-khal setup` applies the first group but not the machine checks, so it can still be used to repair a configuration whose directories are gone.
