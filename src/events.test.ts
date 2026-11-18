@@ -407,6 +407,24 @@ describe("renderFile", () => {
     expect(renderFile("c", raw(ev), 0, 1000, "Nope/Zone").problems[0]).toContain("unknown time zone");
   });
 
+  it("says nothing about the details of a hidden event that cannot be expanded", () => {
+    const ev = (cls: string) => [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "UID:u",
+      cls,
+      "DTSTART;TZID=Secret/Place:20261102T100000",
+      "DTEND:20261102T110000Z",
+      "RRULE:FREQ=DAILY",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ];
+    const hidden = renderFile("c", raw(ev("CLASS:PRIVATE")), 0, 4e12, "Europe/Berlin").problems;
+    expect(hidden).toEqual(["/x/a.ics: the event cannot be expanded (its details are hidden)"]);
+    const shown = renderFile("c", raw(ev("CLASS:PUBLIC")), 0, 4e12, "Europe/Berlin").problems;
+    expect(shown[0]).toContain("Secret/Place");
+  });
+
   it("reports an invalid window", () => {
     const ev = [
       "BEGIN:VCALENDAR",

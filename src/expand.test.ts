@@ -574,6 +574,20 @@ describe("long series", () => {
     expect(dates(l, "2027-01-01", "2027-01-02")).toMatch(/too many/);
   });
 
+  it("skips years without Feb 29 also when the rule has BYxxx parts", () => {
+    const l = ics(...vevent("DTSTART:20240229T100000Z", "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29"));
+    expect(dates(l, "2024-01-01", "2033-01-01")).toEqual(["2024-02-29", "2028-02-29", "2032-02-29"]);
+  });
+
+  it("handles a huge INTERVAL on sub-daily rules without walking or overflowing", () => {
+    for (const freq of ["MINUTELY", "SECONDLY", "HOURLY"]) {
+      const l = ics(...vevent("DTSTART:20260101T000000Z", `RRULE:FREQ=${freq};INTERVAL=2000000000`));
+      expect(occ(l, "2026-01-01T00:00:00Z", "2030-01-01T00:00:00Z")).toEqual([
+        expect.stringContaining("2026-01-01T"),
+      ]);
+    }
+  });
+
   it("refuses to walk endlessly towards a distant window", () => {
     expect(MAX_WALKED).toBeGreaterThan(MAX_OCCURRENCES);
     const l = ics(...vevent("DTSTART:20200101T000000Z", "RRULE:FREQ=SECONDLY"));

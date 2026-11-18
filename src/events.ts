@@ -246,7 +246,10 @@ export const renderFile = (
   // A file with exceptions only (RFC 4791 4.1) has no main event: each exception stands for itself.
   const expanded: Result.Result<readonly Instance[], InvalidInput> =
     master === undefined ? Result.succeed([]) : occurrencesIn(raw.lines, fromMs, toMs, hostZone);
-  if (Result.isFailure(expanded)) return problem(expanded.failure.message);
+  // what a failure says (zone names, rules, durations) is a detail of the event: not for a hidden one
+  const secret = master !== undefined && classification(master) !== "PUBLIC";
+  const HIDDEN_PROBLEM = "the event cannot be expanded (its details are hidden)";
+  if (Result.isFailure(expanded)) return problem(secret ? HIDDEN_PROBLEM : expanded.failure.message);
 
   const base = master === undefined ? undefined : textFields(master, false);
   const runs = evs
@@ -255,8 +258,8 @@ export const renderFile = (
       text: textFields(o, base?.hidden ?? false),
       run: occurrencesIn(onlyOverride(raw.lines, o), fromMs, toMs, hostZone),
     }));
-  const failures = runs.flatMap(({ run }) =>
-    Result.isFailure(run) ? [`${raw.file}: ${run.failure.message}`] : [],
+  const failures = runs.flatMap(({ run, text }) =>
+    Result.isFailure(run) ? [`${raw.file}: ${text.hidden ? HIDDEN_PROBLEM : run.failure.message}`] : [],
   );
   const standalone = runs.flatMap(({ text, run }) =>
     Result.isSuccess(run) ? run.success.map((i) => ({ i, text })) : [],
