@@ -33,6 +33,7 @@ describe("names and files", () => {
       "/etc/x.ics",
       ".hidden.ics",
       "a b.ics",
+      "a@b.ics",
       "a\nb.ics",
       "x".repeat(300),
     ])

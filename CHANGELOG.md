@@ -15,5 +15,5 @@ Version 3.0 is a breaking release: the server no longer runs `khal`. The name `m
 - **Time zones** are handled by the server (see [Time zones](README.md#time-zones)): the host zone comes from `TZ` or the system, and written events carry a proper `VTIMEZONE`.
 - **vdirsyncer stays external.** The server never talks to a CalDAV server; keep syncing with your existing setup.
 - **Output.** The fields of the read tools are unchanged, but the values are now rendered by the server rather than by khal (ISO dates, `HH:MM` times), and search is a plain text match, not an SQL `LIKE`.
-- **UIDs are bare UUIDs.** New events and split-off series get a random UUID v4 as UID and file name (`<uuid>.ics`), as RFC 7986 recommends; 2.x-style `<uuid>@mcp-khal` UIDs are no longer generated. Existing events keep theirs.
+- **UIDs are bare UUIDs.** New events and split-off series get a random UUID v4 as UID and file name (`<uuid>.ics`), as RFC 7986 recommends; 2.x-style `<uuid>@mcp-khal` UIDs are no longer generated. File names of new events never contain `@`. Existing events keep theirs.
 - **Standards.** Every requirement of RFC 5545, 5546, 6868, 4791 and 7986 that applies is attributed to a test (see [Standards conformance](README.md#standards-conformance)). Events with `CLASS:PRIVATE` or `CLASS:CONFIDENTIAL` are shown without details.

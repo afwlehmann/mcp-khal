@@ -38,7 +38,7 @@ The range of `list_events` and `search_events` is ISO, not free text. The gramma
 - `start` is `YYYY-MM-DD` for an all-day event (then `end` is the last day, inclusive) or `YYYY-MM-DDTHH:MM` for a timed one.
 - Give `end` (same form) or `duration` (`1h`, `30m`, `1h30m`, `2d`), not both. With neither, a timed event lasts one hour and an all-day event one day. A timed event must end after it starts.
 - `timezone` is an IANA zone name (`Europe/Berlin`) in which a timed event's `start` and `end` are read; the default is the server's [time zone](#time-zones). It is ignored for all-day events.
-- The file name is a plain token derived from the uid, and an existing file is never overwritten.
+- The file name is a plain token derived from the uid (letters, digits, `.`, `_`, `-`; never `@`, which vdirsyncer has trouble with), and an existing file is never overwritten.
 
 `update_event` rewrites the event's `.ics` file atomically, and the previous version is not kept: it cannot be undone. Its description says so and tells the agent to ask the user first. The event is identified by `calendar` and `uid` (both are in the output of the read tools). Only the given fields change; an empty `location` or `description` removes it. `start` (`YYYY-MM-DD HH:MM`) and `end` (`HH:MM`, same day) go together and are in the event's own time zone (UTC for an event stored in UTC). All-day events cannot be moved. Attendees are not touched and no invitation update is sent. SEQUENCE, LAST-MODIFIED and DTSTAMP are updated.
 

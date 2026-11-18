@@ -49,10 +49,10 @@ export const isEventFile = (name: string): boolean =>
 
 /**
  * The path of a new file in a vdir. The name is a single plain file name (letters, digits and
- * `._@-`, not starting with a dot), so it can never leave the directory or hide.
+ * `._-`, not starting with a dot, and never `@`, which vdirsyncer has trouble with), so it can never leave the directory or hide.
  */
 export const newFileIn = (dir: string, name: string): string | InvalidInput =>
-  /^[A-Za-z0-9_@-][A-Za-z0-9._@-]{0,200}$/.test(name)
+  /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,200}$/.test(name)
     ? join(dir, name)
     : invalid(`'${name}' is not a safe file name`);
 

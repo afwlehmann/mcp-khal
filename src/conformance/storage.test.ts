@@ -390,10 +390,10 @@ describe("creating", () => {
 
   itReq(
     ["VDIR:filename-similar-to-uid", "POLICY:new-event-filename-and-uid"],
-    "a new file name is a plain name from [A-Za-z0-9._@-] inside the directory",
+    "a new file name is a plain name from [A-Za-z0-9._-] inside the directory, never with @",
     () => {
       expect(newFileIn("/v", "3f2a-b1.ics")).toBe("/v/3f2a-b1.ics");
-      for (const bad of ["../x.ics", "a/b.ics", ".x.ics", "a b.ics", ""])
+      for (const bad of ["../x.ics", "a/b.ics", ".x.ics", "a b.ics", "a@b.ics", "@a.ics", ""])
         expect(typeof newFileIn("/v", bad)).not.toBe("string");
     },
   );

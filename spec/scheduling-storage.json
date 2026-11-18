@@ -1435,7 +1435,7 @@
     "verified": "quoted",
     "scope": ["generate"],
     "matrixRef": "V4",
-    "test": "new_event names the file from the UID: <uid>.ics where uid is restricted to [A-Za-z0-9._@-], no leading dot, no slash.",
+    "test": "new_event names the file from the UID: <uid>.ics where uid is is never part of a name with @ (vdirsyncer has trouble with it), a leading dot or a slash; the name is restricted to [A-Za-z0-9._-].",
     "status": "required"
   },
   {
