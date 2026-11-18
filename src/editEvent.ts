@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { Effect, Result } from "effect";
 import { resolveAddress } from "./config.js";
 import { type AppError, InvalidInput } from "./errors.js";
+import { classification } from "./events.js";
 import { hostOccurrenceDatesIn, type Instance, occurrencesIn } from "./expand.js";
 import { type Event, events, isMaster, mapEvents, type Prop, prop, setProp } from "./ics.js";
 import { titleWarning } from "./newEvent.js";
@@ -190,6 +191,10 @@ const text = (e: Event, name: string, v: string | null | undefined): Event => {
 
 // ---------- who may revise ----------
 
+/** The organizer as shown to the user: not for an event whose details are hidden (CLASS not PUBLIC). */
+const organizerShown = (master: Event, organizer: Prop): string =>
+  classification(master) === "PUBLIC" ? normAddress(organizer.value) : "somebody else";
+
 /**
  * An event with an ORGANIZER that is not the user belongs to somebody else: its time and
  * recurrence are not ours to change (we cannot tell the attendees). An event without ORGANIZER is
@@ -200,16 +205,17 @@ export const requireMayRevise = (master: Event, env: EditEnv): V<undefined> => {
   return organizer === undefined || sameAddress(organizer.value, env.me)
     ? Result.succeed(undefined)
     : fail(
-        `only the organizer can change the time or recurrence of an event: this one is organized by ${normAddress(organizer.value)}, not by you (${env.me ?? "no address is configured for this calendar"}); its text can still be changed in your own calendar`,
+        `only the organizer can change the time or recurrence of an event: this one is organized by ${organizerShown(master, organizer)}, not by you (${env.me ?? "no address is configured for this calendar"}); its text can still be changed in your own calendar`,
       );
 };
 
 /** A note for the tool result when the user changes an event somebody else organizes. */
 export const organizerNote = (lines: readonly string[], env: EditEnv): string | undefined => {
-  const organizer = prop(events(lines).find(isMaster) ?? [], "ORGANIZER");
+  const master = events(lines).find(isMaster) ?? [];
+  const organizer = prop(master, "ORGANIZER");
   return organizer === undefined || sameAddress(organizer.value, env.me)
     ? undefined
-    : `Note: ${normAddress(organizer.value)} organizes this event and is not told about the change: only your own calendar file changed.`;
+    : `Note: ${organizerShown(master, organizer)} organizes this event and is not told about the change: only your own calendar file changed.`;
 };
 
 // ---------- applying the changes ----------

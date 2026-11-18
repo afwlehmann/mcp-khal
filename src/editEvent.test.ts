@@ -191,6 +191,10 @@ describe("updateLines", () => {
     expect(prop(main(unwrap(update(own, move))), "SEQUENCE")?.value).toBe("2");
     expect(organizerNote(invited, ENV)).toMatch(/boss@example.com organizes this event and is not told/);
     expect(organizerNote(own, ENV)).toBeUndefined();
+    // the organizer of an event with hidden details is not named
+    const secret = ics(["ORGANIZER:mailto:boss@example.com", "CLASS:PRIVATE"]);
+    expect(failure(update(secret, move)).message).not.toMatch(/boss@example.com/);
+    expect(organizerNote(secret, ENV)).toMatch(/somebody else organizes/);
     expect(organizerNote(ics(), ENV)).toBeUndefined();
     expect(organizerNote(["BEGIN:VCALENDAR", "END:VCALENDAR"], ENV)).toBeUndefined();
   });
