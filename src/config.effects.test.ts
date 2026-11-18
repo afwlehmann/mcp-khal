@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { defaultConfig, loadConfig, saveConfig, serializeConfig } from "./config.js";
@@ -29,6 +29,9 @@ describe("config files", () => {
     await runOk(saveConfig(path, c));
     expect(await readFile(path, "utf8")).toBe(serializeConfig(c));
     expect(await runOk(loadConfig(path))).toEqual(c);
+    expect(await readdir(join(dir, "nested", "deeper"))).toEqual(["cfg.json"]); // no temporary file stays
+    await runOk(saveConfig(path, defaultConfig)); // replaces the old file
+    expect(await readFile(path, "utf8")).toBe(serializeConfig(defaultConfig));
   });
 
   it("rejects a file with a key of an earlier version", async () => {

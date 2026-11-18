@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Effect, Result } from "effect";
 import { type AppError, InvalidInput, ioError } from "./errors.js";
@@ -93,7 +93,8 @@ const envValue = (env: Env, name: string): string | undefined => {
 // turned into a single `_` (work-1 -> WORK_1). Because the shape of the config is fixed (the
 // settings of a calendar are the closed set path, email, alarm), the setting is always the last
 // part and the calendar everything between, so a `_` inside a name is not ambiguous. The location
-// of the config file itself is MCP_KHAL_CONFIG. An empty variable counts as unset; a variable
+// of the config file itself is MCP_KHAL_CONFIG. Other MCP_KHAL_ variables (MCP_KHAL_BIN of an
+// earlier version, say) are left alone: only the CALENDARS_ family is checked for typos. An empty variable counts as unset; a variable
 // beats the file.
 
 export const ENV_PREFIX = "MCP_KHAL_";
@@ -118,7 +119,7 @@ type Source = (path: string) => string;
 
 /**
  * Lays the environment over the raw config: returns the new raw object and, for every path a
- * variable set, the name of that variable. Variables that look like settings but are none (a typo)
+ * variable set, the name of that variable. Variables under `MCP_KHAL_CALENDARS_` that are no setting (a typo)
  * and calendar names that cannot be told apart by their variable name are problems.
  */
 const overlayEnv = (
@@ -544,5 +545,17 @@ export const loadConfig = (path: string): Effect.Effect<Config, AppError> =>
 export const saveConfig = (path: string, c: Config): Effect.Effect<void, AppError> =>
   Effect.gen(function* () {
     yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: ioError });
-    yield* Effect.tryPromise({ try: () => writeFile(path, serializeConfig(c), "utf8"), catch: ioError });
+    // a temporary file next to the config, renamed over it: a reader never sees half a file
+    const tmp = `${path}.tmp`;
+    yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          await writeFile(tmp, serializeConfig(c), "utf8");
+          await rename(tmp, path);
+        } finally {
+          await rm(tmp, { force: true });
+        }
+      },
+      catch: ioError,
+    });
   });
